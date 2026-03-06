@@ -113,7 +113,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <UCard class="bg-[#EFEBE5] dark:bg-default">
+    <UCard class="bg-default">
       <template #header>
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">

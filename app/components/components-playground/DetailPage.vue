@@ -84,16 +84,19 @@ const DEFAULT_THEME_COLORS: ThemeColors = {
 
 const VIEWPORT_FRAME_STYLES: Record<ViewportMode, Record<string, string>> = {
   desktop: {
-    width: 'min(100%, 1120px)',
-    height: '820px',
+    width: 'min(calc(100% - 0.75rem), 1120px, calc((100dvh - 18rem) * 1.3659))',
+    aspectRatio: '1120 / 820',
+    maxHeight: 'min(820px, calc(100dvh - 18rem))',
   },
   tablet: {
-    width: 'min(100%, 900px)',
-    height: '980px',
+    width: 'min(calc(100% - 0.75rem), 900px, calc((100dvh - 18rem) * 0.9184))',
+    aspectRatio: '900 / 980',
+    maxHeight: 'min(980px, calc(100dvh - 18rem))',
   },
   mobile: {
-    width: 'min(100%, 420px)',
-    height: '760px',
+    width: 'min(calc(100% - 0.75rem), 420px, calc((100dvh - 18rem) * 0.5527))',
+    aspectRatio: '420 / 760',
+    maxHeight: 'min(760px, calc(100dvh - 18rem))',
   },
 }
 
@@ -622,10 +625,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="h-full -mx-4 -my-1">
+  <div class="h-full p-4 md:p-5">
     <div class="flex h-full overflow-hidden">
-      <section class="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div class="flex items-center border-b border-default bg-white p-4 dark:bg-gray-900">
+      <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-l-xl border border-default bg-default">
+        <div
+          data-testid="component-detail-header"
+          class="flex items-center gap-4 border-b border-default bg-default px-5 py-4 md:px-6"
+        >
           <div class="min-w-0 flex-1">
             <div class="text-sm font-semibold">
               {{ detail?.label || slug || 'Component' }}
@@ -636,7 +642,7 @@ onBeforeUnmount(() => {
             </p>
           </div>
 
-          <div class="flex flex-1 justify-center px-4">
+          <div class="flex flex-1 justify-center px-2 md:px-4">
             <UTabs
               v-model="viewport"
               :items="viewportItems"
@@ -661,29 +667,26 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-if="loadError" class="border-b border-default px-4 py-2 text-sm text-error">
+        <div v-if="loadError" class="border-b border-default px-5 py-2 text-sm text-error md:px-6">
           {{ loadError }}
         </div>
-        <div v-if="runtimeError" class="border-b border-default px-4 py-2 text-sm text-error">
+        <div v-if="runtimeError" class="border-b border-default px-5 py-2 text-sm text-error md:px-6">
           {{ runtimeError }}
         </div>
 
-        <div class="min-h-0 flex-1 overflow-auto overflow-x-hidden bg-[#0f172a] p-4">
-          <div class="mx-auto flex h-full min-h-full w-full max-w-full items-start justify-center py-6">
+        <div class="min-h-0 flex-1 overflow-auto overflow-x-hidden bg-[#0f172a] p-3 md:p-4">
+          <div class="mx-auto flex h-full min-h-full w-full max-w-full items-center justify-center py-1 md:py-2">
             <div
-              class="overflow-hidden rounded-xl border border-default bg-default p-3 shadow-sm transition-all"
+              data-testid="component-preview-frame"
+              id="rfm-components-playground-mount"
+              class="overflow-x-hidden overflow-y-auto rounded-xl border border-default bg-default p-4 shadow-sm transition-all"
               :style="viewportFrameStyle"
-            >
-              <div
-                id="rfm-components-playground-mount"
-                class="h-full min-h-[320px] overflow-x-hidden overflow-y-auto rounded-lg border border-default bg-white p-4"
-              />
-            </div>
+            />
           </div>
         </div>
       </section>
 
-      <section class="flex w-[420px] flex-col border-l border-default bg-white dark:bg-gray-900">
+      <section class="flex w-[420px] flex-col border-y border-r border-default bg-default">
         <div class="space-y-3 border-b border-default p-4">
           <UFormField label="Available Components">
             <USelect v-model="selectedSlug" :items="availableSlugs" class="w-full" />
