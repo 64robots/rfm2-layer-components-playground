@@ -84,14 +84,8 @@ const DEFAULT_THEME_COLORS: ThemeColors = {
 
 const VIEWPORT_FRAME_STYLES: Record<ViewportMode, Record<string, string>> = {
   desktop: {
-<<<<<<< HEAD
     width: '100%',
     height: '100%',
-=======
-    width: 'min(calc(100% - 0.75rem), 1120px, calc((100dvh - 18rem) * 1.3659))',
-    aspectRatio: '1120 / 820',
-    maxHeight: 'min(820px, calc(100dvh - 18rem))',
->>>>>>> aa96d09d59763e0f58a8036a218d804838fe5ca9
   },
   tablet: {
     width: 'min(calc(100% - 0.75rem), 900px, calc((100dvh - 18rem) * 0.9184))',
@@ -722,16 +716,8 @@ onBeforeUnmount(() => {
 <template>
   <div class="h-full p-4 md:p-5">
     <div class="flex h-full overflow-hidden">
-<<<<<<< HEAD
       <section class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div class="flex items-center border-b border-default bg-default p-4">
-=======
-      <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-l-xl border border-default bg-default">
-        <div
-          data-testid="component-detail-header"
-          class="flex items-center gap-4 border-b border-default bg-default px-5 py-4 md:px-6"
-        >
->>>>>>> aa96d09d59763e0f58a8036a218d804838fe5ca9
           <div class="min-w-0 flex-1">
             <div class="text-sm font-semibold">
               {{ detail?.label || slug || 'Component' }}
@@ -742,11 +728,7 @@ onBeforeUnmount(() => {
             </p>
           </div>
 
-<<<<<<< HEAD
           <div class="flex flex-1 items-center justify-center gap-3 px-4">
-=======
-          <div class="flex flex-1 justify-center px-2 md:px-4">
->>>>>>> aa96d09d59763e0f58a8036a218d804838fe5ca9
             <UTabs
               v-model="viewport"
               :items="viewportItems"
@@ -793,7 +775,6 @@ onBeforeUnmount(() => {
         <div class="min-h-0 flex-1 overflow-auto overflow-x-hidden bg-[#0f172a] p-3 md:p-4">
           <div class="mx-auto flex h-full min-h-full w-full max-w-full items-center justify-center py-1 md:py-2">
             <div
-<<<<<<< HEAD
               class="overflow-hidden rounded-xl border border-default bg-default shadow-sm transition-all"
               :style="viewportFrameStyle"
             >
@@ -804,22 +785,11 @@ onBeforeUnmount(() => {
                 sandbox="allow-scripts allow-same-origin"
               />
             </div>
-=======
-              data-testid="component-preview-frame"
-              id="rfm-components-playground-mount"
-              class="overflow-x-hidden overflow-y-auto rounded-xl border border-default bg-default p-4 shadow-sm transition-all"
-              :style="viewportFrameStyle"
-            />
->>>>>>> aa96d09d59763e0f58a8036a218d804838fe5ca9
           </div>
         </div>
       </section>
 
-<<<<<<< HEAD
       <section class="flex w-[420px] flex-col border-l border-default bg-default">
-=======
-      <section class="flex w-[420px] flex-col border-y border-r border-default bg-default">
->>>>>>> aa96d09d59763e0f58a8036a218d804838fe5ca9
         <div class="space-y-3 border-b border-default p-4">
           <UFormField label="Available Components">
             <USelect v-model="selectedSlug" :items="availableSlugs" class="w-full" />
