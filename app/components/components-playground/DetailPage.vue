@@ -84,8 +84,8 @@ const DEFAULT_THEME_COLORS: ThemeColors = {
 
 const VIEWPORT_FRAME_STYLES: Record<ViewportMode, Record<string, string>> = {
   desktop: {
-    width: 'min(100%, 1120px)',
-    height: '820px',
+    width: '100%',
+    height: '100%',
   },
   tablet: {
     width: 'min(100%, 900px)',
@@ -107,6 +107,7 @@ const adapter = useComponentsPlaygroundAdapter()
 const runtime = useComponentsRuntime()
 
 const mountSelector = '#rfm-components-playground-mount'
+const iframeRef = ref<HTMLIFrameElement | null>(null)
 
 const slug = computed(() => String(route.params.slug || '').trim())
 const hostMode = computed(() => String(runtimeConfig.public.componentsPlaygroundHost || 'builder'))
@@ -124,6 +125,7 @@ const activeTab = ref<DetailTab>('form')
 const propsDraft = ref<Record<string, unknown>>({})
 const themeColors = ref<ThemeColors>({ ...DEFAULT_THEME_COLORS })
 const a11yAudit = ref<A11yAuditState>(createEmptyA11yAudit())
+const themeVariant = ref<'default' | 'rfm-classic'>('rfm-classic')
 
 const availableComponents = computed<ComponentsCatalogItem[]>(() => catalog.value?.components || [])
 const availableSlugs = computed<string[]>(() => availableComponents.value.map((item) => item.slug))
@@ -415,14 +417,28 @@ async function ensureRuntimeLoaded() {
   }
 }
 
+function getIframeDocument(): Document | null {
+  return iframeRef.value?.contentDocument ?? null
+}
+
+function getIframeWindow(): (Window & typeof globalThis) | null {
+  return iframeRef.value?.contentWindow as (Window & typeof globalThis) | null
+}
+
 function readThemeColors(): ThemeColors {
-  const mountEl = document.querySelector(mountSelector)
+  const iframeDoc = getIframeDocument()
+  const mountEl = iframeDoc?.querySelector(mountSelector)
   const themeRoot = mountEl?.querySelector('.rfm-theme') || mountEl
   if (!themeRoot) {
     return { ...DEFAULT_THEME_COLORS }
   }
 
-  const styles = getComputedStyle(themeRoot)
+  const iframeWin = getIframeWindow()
+  if (!iframeWin) {
+    return { ...DEFAULT_THEME_COLORS }
+  }
+
+  const styles = iframeWin.getComputedStyle(themeRoot)
   return {
     background: styles.getPropertyValue('--rfm-background').trim() || DEFAULT_THEME_COLORS.background,
     foreground: styles.getPropertyValue('--rfm-foreground').trim() || DEFAULT_THEME_COLORS.foreground,
@@ -436,16 +452,81 @@ function readThemeColors(): ThemeColors {
   }
 }
 
+async function prepareIframe(): Promise<void> {
+  const iframe = iframeRef.value
+  if (!iframe) {
+    throw new Error('Preview iframe not available.')
+  }
+
+  const iframeDoc = iframe.contentDocument
+  const iframeWin = iframe.contentWindow
+  if (!iframeDoc || !iframeWin) {
+    throw new Error('Cannot access preview iframe document.')
+  }
+
+  if (iframeDoc.querySelector(mountSelector)) {
+    return
+  }
+
+  const res = runtime.resolution.value
+  if (!res) {
+    throw new Error('Resolution not available.')
+  }
+
+  const cssUrl = res.bundleCssUrl || resolvePreviewAssetUrl(res.cdnBaseUrl, res.bundleCssKey)
+  const runtimeUrl = res.vueEsmUrl || resolvePreviewAssetUrl(res.cdnBaseUrl, res.vueEsmKey)
+
+  iframeDoc.open()
+  iframeDoc.write(`<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="${cssUrl}">
+<style>html,body{margin:0;padding:0;height:100%;background:#fff;}</style>
+</head><body>
+<div id="rfm-components-playground-mount" style="min-height:320px;padding:16px;"></div>
+<script type="module" src="${runtimeUrl}"><\/script>
+</body></html>`)
+  iframeDoc.close()
+
+  for (let i = 0; i < 100; i++) {
+    if (iframeWin.__RFM_COMPONENTS_VUE__) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+
+  throw new Error('Timed out waiting for runtime inside preview iframe.')
+}
+
+function resolvePreviewAssetUrl(cdnBaseUrl: string, key: string): string {
+  if (/^https?:\/\//i.test(String(key || ''))) {
+    return String(key)
+  }
+  const trimmedBase = String(cdnBaseUrl || '').replace(/\/+$/, '')
+  const trimmedKey = String(key || '').replace(/^\/+/, '')
+  return `${trimmedBase}/${trimmedKey}`
+}
+
 async function renderComponent() {
   if (!detail.value) {
     return
   }
 
   await ensureRuntimeLoaded()
-  runtime.renderPod({
+  await prepareIframe()
+
+  const iframeWin = getIframeWindow()
+  const iframeRuntime = iframeWin?.__RFM_COMPONENTS_VUE__
+  if (!iframeRuntime) {
+    throw new Error('Runtime not available inside preview iframe.')
+  }
+
+  iframeRuntime.renderPod({
     slug: detail.value.slug,
     mountSelector,
     props: propsDraft.value,
+    themeVariant: themeVariant.value,
   })
 
   await nextTick()
@@ -457,7 +538,8 @@ async function runA11yChecks() {
     return
   }
 
-  const mountEl = document.querySelector(mountSelector)
+  const iframeDoc = getIframeDocument()
+  const mountEl = iframeDoc?.querySelector(mountSelector)
   if (!mountEl) {
     a11yAudit.value = {
       ...createEmptyA11yAudit(),
@@ -604,10 +686,18 @@ async function loadData() {
   }
 }
 
+function unmountFromIframe() {
+  const iframeWin = getIframeWindow()
+  const iframeRuntime = iframeWin?.__RFM_COMPONENTS_VUE__
+  if (iframeRuntime) {
+    iframeRuntime.unmount({ mountSelector })
+  }
+}
+
 watch(
   () => slug.value,
   async () => {
-    runtime.unmount(mountSelector)
+    unmountFromIframe()
     await loadData()
   },
 )
@@ -617,7 +707,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  runtime.unmount(mountSelector)
+  unmountFromIframe()
 })
 </script>
 
@@ -625,7 +715,7 @@ onBeforeUnmount(() => {
   <div class="h-full -mx-4 -my-1">
     <div class="flex h-full overflow-hidden">
       <section class="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div class="flex items-center border-b border-default bg-white p-4 dark:bg-gray-900">
+        <div class="flex items-center border-b border-default bg-default p-4">
           <div class="min-w-0 flex-1">
             <div class="text-sm font-semibold">
               {{ detail?.label || slug || 'Component' }}
@@ -636,13 +726,25 @@ onBeforeUnmount(() => {
             </p>
           </div>
 
-          <div class="flex flex-1 justify-center px-4">
+          <div class="flex flex-1 items-center justify-center gap-3 px-4">
             <UTabs
               v-model="viewport"
               :items="viewportItems"
               size="sm"
               variant="pill"
             />
+            <div class="inline-flex items-center rounded-lg bg-elevated p-1 mb-2">
+              <button
+                v-for="item in [{ label: 'Default', value: 'default' }, { label: 'RFM Classic', value: 'rfm-classic' }]"
+                :key="item.value"
+                type="button"
+                class="rounded-md px-3 py-2  text-xs font-medium leading-none transition-colors"
+                :class="themeVariant === item.value ? 'bg-inverted text-inverted' : 'text-default hover:bg-muted/60'"
+                @click="themeVariant = item.value; renderComponent()"
+              >
+                {{ item.label }}
+              </button>
+            </div>
           </div>
 
           <div class="flex flex-1 items-center justify-end gap-2">
@@ -671,19 +773,21 @@ onBeforeUnmount(() => {
         <div class="min-h-0 flex-1 overflow-auto overflow-x-hidden bg-[#0f172a] p-4">
           <div class="mx-auto flex h-full min-h-full w-full max-w-full items-start justify-center py-6">
             <div
-              class="overflow-hidden rounded-xl border border-default bg-default p-3 shadow-sm transition-all"
+              class="overflow-hidden rounded-xl border border-default bg-default shadow-sm transition-all"
               :style="viewportFrameStyle"
             >
-              <div
-                id="rfm-components-playground-mount"
-                class="h-full min-h-[320px] overflow-x-hidden overflow-y-auto rounded-lg border border-default bg-white p-4"
+              <iframe
+                ref="iframeRef"
+                class="h-full w-full border-0 rounded-lg"
+                title="Component preview"
+                sandbox="allow-scripts allow-same-origin"
               />
             </div>
           </div>
         </div>
       </section>
 
-      <section class="flex w-[420px] flex-col border-l border-default bg-white dark:bg-gray-900">
+      <section class="flex w-[420px] flex-col border-l border-default bg-default">
         <div class="space-y-3 border-b border-default p-4">
           <UFormField label="Available Components">
             <USelect v-model="selectedSlug" :items="availableSlugs" class="w-full" />

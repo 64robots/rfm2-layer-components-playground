@@ -64,10 +64,12 @@ export type ComponentsRuntime = {
     slug: string
     mountSelector: string
     props?: Record<string, unknown>
+    themeVariant?: string
   }) => void
   updateProps: (args: {
     mountSelector: string
     props: Record<string, unknown>
+    themeVariant?: string
   }) => void
   unmount: (args: { mountSelector: string }) => void
 }

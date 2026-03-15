@@ -43,6 +43,7 @@ export function useComponentsRuntime() {
     slug: string
     mountSelector: string
     props?: Record<string, unknown>
+    themeVariant?: string
   }) {
     if (!runtime.value) {
       throw new Error('Components runtime not loaded. Call loadRuntime() first.')
