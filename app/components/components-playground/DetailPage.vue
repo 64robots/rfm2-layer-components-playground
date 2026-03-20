@@ -186,6 +186,8 @@ const formFields = computed<FormField[]>(() => {
   return fields
 })
 
+const visibleFormFields = computed(() => formFields.value.filter(field => !shouldHideField(field)))
+
 const contrastMatrix = computed<ContrastRow[]>(() => {
   const colors = themeColors.value
   const pairs = [
@@ -388,6 +390,23 @@ function getFieldValue(field: FormField): unknown {
   return getValueAtPath(propsDraft.value, field.path)
 }
 
+function isIntroCardBodyField(field: FormField): boolean {
+  return detail.value?.slug === 'intro-card' && field.id === 'payload.body'
+}
+
+function isIntroCardMediaSrcField(field: FormField): boolean {
+  return detail.value?.slug === 'intro-card' && field.id === 'payload.media.src'
+}
+
+function shouldHideField(field: FormField): boolean {
+  return detail.value?.slug === 'intro-card' && field.id === 'payload.media.alt'
+}
+
+function getIntroCardMediaAlt(): string {
+  const value = getValueAtPath(propsDraft.value, ['payload', 'media', 'alt'])
+  return typeof value === 'string' ? value : ''
+}
+
 async function updateField(field: FormField, value: unknown) {
   const next = normalizeDraft(propsDraft.value)
 
@@ -398,6 +417,19 @@ async function updateField(field: FormField, value: unknown) {
     setValueAtPath(next, field.path, Boolean(value))
   } else {
     setValueAtPath(next, field.path, value)
+  }
+
+  propsDraft.value = next
+  await renderComponent()
+}
+
+async function updateIntroCardMediaField(path: string[], value: unknown): Promise<void> {
+  const next = normalizeDraft(propsDraft.value)
+  setValueAtPath(next, path, value)
+
+  const currentKind = getValueAtPath(next, ['payload', 'media', 'kind'])
+  if (typeof getValueAtPath(next, ['payload', 'media', 'src']) === 'string' && getValueAtPath(next, ['payload', 'media', 'src'])) {
+    setValueAtPath(next, ['payload', 'media', 'kind'], currentKind === 'video' ? 'video' : 'image')
   }
 
   propsDraft.value = next
@@ -807,13 +839,13 @@ onBeforeUnmount(() => {
 
           <div class="min-h-0 flex-1 overflow-auto p-4">
             <div v-if="activeTab === 'form'" class="space-y-4">
-              <div v-if="formFields.length === 0" class="text-sm text-muted">
+              <div v-if="visibleFormFields.length === 0" class="text-sm text-muted">
                 No editable form fields are available for this component yet.
               </div>
 
               <div v-else class="space-y-4">
                 <div
-                  v-for="field in formFields"
+                  v-for="field in visibleFormFields"
                   :key="field.id"
                   class="space-y-2 rounded-lg border border-default bg-elevated/40 p-3"
                 >
@@ -828,13 +860,31 @@ onBeforeUnmount(() => {
                     <div v-if="field.description" class="mt-1 text-xs text-muted">
                       {{ field.description }}
                     </div>
-                    <div v-if="field.disabled" class="mt-1 text-xs text-muted">
+                    <div
+                      v-if="field.disabled && !isIntroCardMediaSrcField(field)"
+                      class="mt-1 text-xs text-muted"
+                    >
                       Managed from the referenced media/content source.
                     </div>
                   </div>
 
+                  <ComponentsPlaygroundRichTextMediaField
+                    v-if="isIntroCardBodyField(field)"
+                    :model-value="String(getFieldValue(field) ?? '')"
+                    placeholder="Write intro card content..."
+                    @update:model-value="(value: string) => updateField(field, value)"
+                  />
+
+                  <ComponentsPlaygroundMediaImageField
+                    v-else-if="isIntroCardMediaSrcField(field)"
+                    :model-value="String(getFieldValue(field) ?? '')"
+                    :alt-text="getIntroCardMediaAlt()"
+                    @update:model-value="(value: string) => updateIntroCardMediaField(['payload', 'media', 'src'], value)"
+                    @update:alt-text="(value: string) => updateIntroCardMediaField(['payload', 'media', 'alt'], value)"
+                  />
+
                   <UCheckbox
-                    v-if="getSchemaType(field.schema) === 'boolean'"
+                    v-else-if="getSchemaType(field.schema) === 'boolean'"
                     :model-value="Boolean(getFieldValue(field))"
                     :disabled="field.disabled"
                     @update:model-value="(value: boolean) => updateField(field, value)"
