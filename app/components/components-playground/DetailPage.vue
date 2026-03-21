@@ -746,9 +746,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="h-full p-4 md:p-5">
-    <div class="flex h-full overflow-hidden">
-      <section class="flex min-h-0 flex-1 flex-col overflow-hidden">
+  <div class="h-full min-w-0 p-4 md:p-5">
+    <div class="flex h-full min-w-0 overflow-hidden">
+      <section class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div class="flex items-center border-b border-default bg-default p-4">
           <div class="min-w-0 flex-1">
             <div class="text-sm font-semibold">
@@ -821,7 +821,7 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section class="flex w-[420px] flex-col border-l border-default bg-default">
+      <section class="flex w-[420px] shrink-0 flex-col border-l border-default bg-default">
         <div class="space-y-3 border-b border-default p-4">
           <UFormField label="Available Components">
             <USelect v-model="selectedSlug" :items="availableSlugs" class="w-full" />
@@ -892,7 +892,7 @@ onBeforeUnmount(() => {
 
                   <USelect
                     v-else-if="Array.isArray(field.schema.enum)"
-                    :items="field.schema.enum.map((value) => ({ label: String(value), value }))"
+                    :items="field.schema.enum.map((value) => ({ label: humanizeKey(String(value)), value }))"
                     label-key="label"
                     value-key="value"
                     :model-value="getFieldValue(field)"
