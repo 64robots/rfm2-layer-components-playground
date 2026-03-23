@@ -44,7 +44,7 @@ function clearSelection(): void {
       <div class="aspect-[16/9] overflow-hidden bg-muted/40">
         <img
           :src="imageUrl"
-          :alt="imageAlt || 'Selected intro card image'"
+          :alt="imageAlt || 'Selected content card image'"
           class="h-full w-full object-cover"
         >
       </div>
@@ -105,8 +105,8 @@ function clearSelection(): void {
 
     <ComponentsPlaygroundMediaLibraryPickerModal
       v-model:open="mediaPickerOpen"
-      title="Select intro card image"
-      description="Choose the hero image for this intro card."
+      title="Select content card image"
+      description="Choose the hero image for this content card."
       @select="applySelection"
     />
   </div>

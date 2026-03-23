@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import Link from '@tiptap/extension-link'
+import TextAlign from '@tiptap/extension-text-align'
+import Underline from '@tiptap/extension-underline'
 import type { MediaLibrarySelection } from '../../composables/components-playground/useMediaLibrary'
 
 const props = defineProps<{
@@ -14,20 +17,65 @@ const emit = defineEmits<{
 const editorRef = ref<{ editor?: unknown } | null>(null)
 const mediaPickerOpen = ref(false)
 
+const editorExtensions = [
+  Underline,
+  Link.configure({
+    openOnClick: false,
+    autolink: true,
+    defaultProtocol: 'https',
+  }),
+  TextAlign.configure({
+    types: ['heading', 'paragraph'],
+    alignments: ['left', 'center', 'right', 'justify'],
+    defaultAlignment: 'left',
+  }),
+]
+
 const editorToolbarItems = [
   [
     { kind: 'undo', icon: 'i-lucide-undo', tooltip: { text: 'Undo' } },
     { kind: 'redo', icon: 'i-lucide-redo', tooltip: { text: 'Redo' } },
   ],
   [
+    {
+      label: 'Text',
+      icon: 'i-lucide-type',
+      tooltip: { text: 'Text style' },
+      items: [[
+        { kind: 'paragraph', label: 'Paragraph', icon: 'i-lucide-pilcrow' },
+        { kind: 'heading', level: 1, label: 'Heading 1', icon: 'i-lucide-heading-1' },
+        { kind: 'heading', level: 2, label: 'Heading 2', icon: 'i-lucide-heading-2' },
+        { kind: 'heading', level: 3, label: 'Heading 3', icon: 'i-lucide-heading-3' },
+      ]],
+    },
+    {
+      icon: 'i-lucide-align-left',
+      tooltip: { text: 'Text alignment' },
+      items: [[
+        { kind: 'textAlign', align: 'left', label: 'Align left', icon: 'i-lucide-align-left' },
+        { kind: 'textAlign', align: 'center', label: 'Align center', icon: 'i-lucide-align-center' },
+        { kind: 'textAlign', align: 'right', label: 'Align right', icon: 'i-lucide-align-right' },
+        { kind: 'textAlign', align: 'justify', label: 'Justify', icon: 'i-lucide-align-justify' },
+      ]],
+    },
+  ],
+  [
     { kind: 'mark', mark: 'bold', icon: 'i-lucide-bold', tooltip: { text: 'Bold' } },
     { kind: 'mark', mark: 'italic', icon: 'i-lucide-italic', tooltip: { text: 'Italic' } },
     { kind: 'mark', mark: 'underline', icon: 'i-lucide-underline', tooltip: { text: 'Underline' } },
     { kind: 'mark', mark: 'strike', icon: 'i-lucide-strikethrough', tooltip: { text: 'Strikethrough' } },
+    { kind: 'mark', mark: 'code', icon: 'i-lucide-code', tooltip: { text: 'Inline code' } },
   ],
   [
     { kind: 'bulletList', icon: 'i-lucide-list', tooltip: { text: 'Bullet list' } },
     { kind: 'orderedList', icon: 'i-lucide-list-ordered', tooltip: { text: 'Numbered list' } },
+    { kind: 'blockquote', icon: 'i-lucide-quote', tooltip: { text: 'Block quote' } },
+    { kind: 'codeBlock', icon: 'i-lucide-square-code', tooltip: { text: 'Code block' } },
+    { kind: 'horizontalRule', icon: 'i-lucide-minus', tooltip: { text: 'Divider' } },
+  ],
+  [
+    { kind: 'link', icon: 'i-lucide-link', tooltip: { text: 'Add or remove link' } },
+    { kind: 'clearFormatting', icon: 'i-lucide-remove-formatting', tooltip: { text: 'Clear formatting' } },
   ],
 ]
 
@@ -88,8 +136,9 @@ function escapeHtmlAttribute(value: string): string {
       ref="editorRef"
       v-model="model"
       content-type="html"
+      :extensions="editorExtensions"
       :editable="!disabled"
-      :placeholder="placeholder || 'Write intro card content...'"
+      :placeholder="placeholder || 'Write content card content...'"
       class="w-full"
       :ui="{
         base: 'min-h-0',
@@ -128,7 +177,7 @@ function escapeHtmlAttribute(value: string): string {
     <ComponentsPlaygroundMediaLibraryPickerModal
       v-model:open="mediaPickerOpen"
       title="Insert image from media library"
-      description="Choose an image to insert into the intro card body."
+      description="Choose an image to insert into the content card body."
       @select="insertImageMarkup"
     />
   </div>

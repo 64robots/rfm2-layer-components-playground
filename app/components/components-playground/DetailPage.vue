@@ -164,6 +164,12 @@ const tabItems = computed<Array<{ label: string, value: DetailTab }>>(() => {
   return items
 })
 
+const highContrastTabsUi = {
+  list: 'bg-zinc-100 rounded-lg',
+  indicator: 'rounded-md shadow-xs bg-zinc-900',
+  trigger: 'data-[state=inactive]:text-zinc-800 hover:data-[state=inactive]:not-disabled:text-zinc-950 data-[state=active]:text-zinc-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900',
+}
+
 const resolutionLabel = computed(() => {
   if (!detail.value) {
     return ''
@@ -390,11 +396,15 @@ function getFieldValue(field: FormField): unknown {
   return getValueAtPath(propsDraft.value, field.path)
 }
 
-function isIntroCardBodyField(field: FormField): boolean {
+function isContentCardBodyField(field: FormField): boolean {
   return detail.value?.slug === 'intro-card' && field.id === 'payload.body'
 }
 
-function isIntroCardMediaSrcField(field: FormField): boolean {
+function isVideoDescriptionField(field: FormField): boolean {
+  return detail.value?.slug === 'video' && field.id === 'payload.description'
+}
+
+function isContentCardMediaSrcField(field: FormField): boolean {
   return detail.value?.slug === 'intro-card' && field.id === 'payload.media.src'
 }
 
@@ -402,7 +412,7 @@ function shouldHideField(field: FormField): boolean {
   return detail.value?.slug === 'intro-card' && field.id === 'payload.media.alt'
 }
 
-function getIntroCardMediaAlt(): string {
+function getContentCardMediaAlt(): string {
   const value = getValueAtPath(propsDraft.value, ['payload', 'media', 'alt'])
   return typeof value === 'string' ? value : ''
 }
@@ -423,7 +433,7 @@ async function updateField(field: FormField, value: unknown) {
   await renderComponent()
 }
 
-async function updateIntroCardMediaField(path: string[], value: unknown): Promise<void> {
+async function updateContentCardMediaField(path: string[], value: unknown): Promise<void> {
   const next = normalizeDraft(propsDraft.value)
   setValueAtPath(next, path, value)
 
@@ -766,6 +776,7 @@ onBeforeUnmount(() => {
               :items="viewportItems"
               size="sm"
               variant="pill"
+              :ui="highContrastTabsUi"
             />
             <div class="inline-flex items-center rounded-lg bg-elevated p-1 mb-2">
               <button
@@ -835,7 +846,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <UTabs v-model="activeTab" :items="tabItems" class="border-b border-default p-4" />
+          <UTabs v-model="activeTab" :items="tabItems" class="border-b border-default p-4" :ui="highContrastTabsUi" />
 
           <div class="min-h-0 flex-1 overflow-auto p-4">
             <div v-if="activeTab === 'form'" class="space-y-4">
@@ -861,7 +872,7 @@ onBeforeUnmount(() => {
                       {{ field.description }}
                     </div>
                     <div
-                      v-if="field.disabled && !isIntroCardMediaSrcField(field)"
+                      v-if="field.disabled && !isContentCardMediaSrcField(field)"
                       class="mt-1 text-xs text-muted"
                     >
                       Managed from the referenced media/content source.
@@ -869,18 +880,18 @@ onBeforeUnmount(() => {
                   </div>
 
                   <ComponentsPlaygroundRichTextMediaField
-                    v-if="isIntroCardBodyField(field)"
+                    v-if="isContentCardBodyField(field) || isVideoDescriptionField(field)"
                     :model-value="String(getFieldValue(field) ?? '')"
-                    placeholder="Write intro card content..."
+                    :placeholder="isVideoDescriptionField(field) ? 'Write video intro or supporting copy...' : 'Write content card content...'"
                     @update:model-value="(value: string) => updateField(field, value)"
                   />
 
                   <ComponentsPlaygroundMediaImageField
-                    v-else-if="isIntroCardMediaSrcField(field)"
+                    v-else-if="isContentCardMediaSrcField(field)"
                     :model-value="String(getFieldValue(field) ?? '')"
-                    :alt-text="getIntroCardMediaAlt()"
-                    @update:model-value="(value: string) => updateIntroCardMediaField(['payload', 'media', 'src'], value)"
-                    @update:alt-text="(value: string) => updateIntroCardMediaField(['payload', 'media', 'alt'], value)"
+                    :alt-text="getContentCardMediaAlt()"
+                    @update:model-value="(value: string) => updateContentCardMediaField(['payload', 'media', 'src'], value)"
+                    @update:alt-text="(value: string) => updateContentCardMediaField(['payload', 'media', 'alt'], value)"
                   />
 
                   <UCheckbox
