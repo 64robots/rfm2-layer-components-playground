@@ -107,6 +107,8 @@ function clearSelection(): void {
       v-model:open="mediaPickerOpen"
       title="Select content card image"
       description="Choose the hero image for this content card."
+      media-type="image"
+      :allowed-media-types="['image']"
       @select="applySelection"
     />
   </div>

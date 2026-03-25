@@ -13,6 +13,8 @@ type MediaDownloadPayload = string | {
   url?: string
 }
 
+export type MediaLibraryType = 'all' | 'image' | 'video' | 'document'
+
 export type MediaLibraryItem = {
   id: string
   name: string
@@ -31,6 +33,8 @@ export type MediaLibrarySelection = {
   item: MediaLibraryItem
   url: string
 }
+
+const ALL_MEDIA_TYPES: Exclude<MediaLibraryType, 'all'>[] = ['image', 'video', 'document']
 
 export function useComponentsPlaygroundMediaLibrary() {
   const config = useRuntimeConfig()
@@ -59,19 +63,47 @@ export function useComponentsPlaygroundMediaLibrary() {
     return nextHeaders
   })
 
-  async function searchImages(query = ''): Promise<MediaLibraryItem[]> {
+  async function searchMedia(type: MediaLibraryType = 'image', query = ''): Promise<MediaLibraryItem[]> {
+    if (type === 'all') {
+      const responses = await Promise.all(
+        ALL_MEDIA_TYPES.map(async (mediaType) => await searchMediaByType(mediaType, query)),
+      )
+
+      const merged = new Map<string, MediaLibraryItem>()
+      for (const items of responses) {
+        for (const item of items) {
+          if (!merged.has(item.id)) {
+            merged.set(item.id, item)
+          }
+        }
+      }
+
+      return Array.from(merged.values()).sort(compareMediaItems)
+    }
+
+    return await searchMediaByType(type, query)
+  }
+
+  async function searchMediaByType(
+    type: Exclude<MediaLibraryType, 'all'>,
+    query = '',
+  ): Promise<MediaLibraryItem[]> {
     const response = await $fetch<ApiEnvelope<MediaListPayload> | MediaListPayload>('/api/media', {
       baseURL: baseURL.value,
       headers: headers.value,
       params: {
-        type: 'image',
+        type,
         per_page: 24,
         ...(query.trim() ? { q: query.trim() } : {}),
       },
     })
 
     const payload = unwrapEnvelope(response)
-    return Array.isArray(payload.items) ? payload.items : []
+    return Array.isArray(payload.items) ? payload.items.sort(compareMediaItems) : []
+  }
+
+  async function searchImages(query = ''): Promise<MediaLibraryItem[]> {
+    return await searchMedia('image', query)
   }
 
   async function resolveMediaUrl(item: MediaLibraryItem): Promise<string> {
@@ -101,6 +133,7 @@ export function useComponentsPlaygroundMediaLibrary() {
   }
 
   return {
+    searchMedia,
     searchImages,
     resolveMediaUrl,
   }
@@ -125,4 +158,17 @@ function unwrapEnvelope<T>(response: ApiEnvelope<T> | T): T {
   }
 
   return envelope.data
+}
+
+function compareMediaItems(left: MediaLibraryItem, right: MediaLibraryItem): number {
+  const leftLabel = (left.originalName || left.name || '').trim().toLowerCase()
+  const rightLabel = (right.originalName || right.name || '').trim().toLowerCase()
+
+  if (leftLabel && rightLabel) {
+    return leftLabel.localeCompare(rightLabel)
+  }
+
+  if (leftLabel) return -1
+  if (rightLabel) return 1
+  return left.id.localeCompare(right.id)
 }

@@ -178,6 +178,8 @@ function escapeHtmlAttribute(value: string): string {
       v-model:open="mediaPickerOpen"
       title="Insert image from media library"
       description="Choose an image to insert into the content card body."
+      media-type="image"
+      :allowed-media-types="['image']"
       @select="insertImageMarkup"
     />
   </div>

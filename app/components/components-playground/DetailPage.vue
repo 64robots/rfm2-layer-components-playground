@@ -19,6 +19,10 @@ type JsonSchemaProperty = {
   description?: string
   properties?: Record<string, JsonSchemaProperty>
   required?: string[]
+  $ref?: string
+  oneOf?: JsonSchemaProperty[]
+  const?: unknown
+  $defs?: Record<string, JsonSchemaProperty>
 }
 
 type FormField = {
@@ -31,6 +35,7 @@ type FormField = {
   schema: JsonSchemaProperty
   multiline: boolean
   disabled: boolean
+  customType?: 'media-asset'
 }
 
 type A11yViolation = {
@@ -167,7 +172,7 @@ const tabItems = computed<Array<{ label: string, value: DetailTab }>>(() => {
 const highContrastTabsUi = {
   list: 'bg-zinc-100 rounded-lg',
   indicator: 'rounded-md shadow-xs bg-zinc-900',
-  trigger: 'data-[state=inactive]:text-zinc-800 hover:data-[state=inactive]:not-disabled:text-zinc-950 data-[state=active]:text-zinc-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900',
+  trigger: 'data-[state=inactive]:text-zinc-800 hover:data-[state=inactive]:not-disabled:text-zinc-950 data-[state=active]:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900',
 }
 
 const resolutionLabel = computed(() => {
@@ -313,26 +318,91 @@ function getSchemaType(schema: JsonSchemaProperty | undefined): string | null {
   return typeof schema.type === 'string' ? schema.type : null
 }
 
+function resolveSchemaReference(
+  schema: JsonSchemaProperty | undefined,
+  rootSchema: JsonSchemaProperty | undefined,
+): JsonSchemaProperty | undefined {
+  if (!schema) {
+    return undefined
+  }
+
+  if (!schema.$ref || !schema.$ref.startsWith('#/$defs/')) {
+    return schema
+  }
+
+  const defKey = schema.$ref.slice('#/$defs/'.length)
+  return rootSchema?.$defs?.[defKey]
+}
+
+function isMediaAssetSchema(
+  schema: JsonSchemaProperty | undefined,
+  rootSchema: JsonSchemaProperty | undefined,
+): boolean {
+  if (!schema) {
+    return false
+  }
+
+  if (schema.$ref?.endsWith('/mediaAssetInput')) {
+    return true
+  }
+
+  const resolved = resolveSchemaReference(schema, rootSchema)
+  const candidate = resolved && resolved !== schema ? resolved : schema
+
+  return Array.isArray(candidate.oneOf)
+    && candidate.oneOf.some((entry) => {
+      const variant = resolveSchemaReference(entry, rootSchema) ?? entry
+      return variant?.properties?.source?.const === 'external'
+        || variant?.properties?.source?.const === 'library'
+    })
+}
+
 function collectSchemaFields(
   out: FormField[],
   schema: JsonSchemaProperty | undefined,
   section: FormSection,
   path: string[],
   parentRequired: string[] = [],
+  rootSchema: JsonSchemaProperty | undefined = schema,
 ) {
-  const properties = schema?.properties
+  const resolvedSchema = resolveSchemaReference(schema, rootSchema) ?? schema
+  const properties = resolvedSchema?.properties
   if (!properties || typeof properties !== 'object') {
     return
   }
 
-  const required = Array.isArray(schema.required) ? schema.required : parentRequired
+  const required = Array.isArray(resolvedSchema?.required) ? resolvedSchema.required : parentRequired
 
   Object.entries(properties).forEach(([key, property]) => {
     const nextPath = [...path, key]
-    const baseType = getSchemaType(property)
+    const resolvedProperty = resolveSchemaReference(property, rootSchema) ?? property
+    const baseType = getSchemaType(resolvedProperty)
 
-    if (baseType === 'object' && property.properties && nextPath.length <= 3) {
-      collectSchemaFields(out, property, section, nextPath, Array.isArray(property.required) ? property.required : [])
+    if (isMediaAssetSchema(property, rootSchema)) {
+      out.push({
+        id: nextPath.join('.'),
+        label: property.title || humanizeKey(key),
+        description: property.description,
+        path: nextPath,
+        required: required.includes(key),
+        section,
+        schema: resolvedProperty,
+        multiline: false,
+        disabled: false,
+        customType: 'media-asset',
+      })
+      return
+    }
+
+    if (baseType === 'object' && resolvedProperty.properties && nextPath.length <= 3) {
+      collectSchemaFields(
+        out,
+        resolvedProperty,
+        section,
+        nextPath,
+        Array.isArray(resolvedProperty.required) ? resolvedProperty.required : [],
+        rootSchema,
+      )
       return
     }
 
@@ -348,7 +418,7 @@ function collectSchemaFields(
         path: nextPath,
         required: required.includes(key),
         section,
-        schema: property,
+        schema: resolvedProperty,
         multiline: baseType === 'string' && MULTILINE_FIELD_PATTERN.test(nextPath.join('.')),
         disabled: MEDIA_REFERENCE_KEYS.has(key),
       })
@@ -408,6 +478,10 @@ function isContentCardMediaSrcField(field: FormField): boolean {
   return detail.value?.slug === 'intro-card' && field.id === 'payload.media.src'
 }
 
+function isMediaAssetField(field: FormField): boolean {
+  return field.customType === 'media-asset'
+}
+
 function shouldHideField(field: FormField): boolean {
   return detail.value?.slug === 'intro-card' && field.id === 'payload.media.alt'
 }
@@ -415,6 +489,22 @@ function shouldHideField(field: FormField): boolean {
 function getContentCardMediaAlt(): string {
   const value = getValueAtPath(propsDraft.value, ['payload', 'media', 'alt'])
   return typeof value === 'string' ? value : ''
+}
+
+function getMediaAssetType(field: FormField): string {
+  const joined = field.path.join('.').toLowerCase()
+
+  if (joined.includes('payload.media.file')) {
+    const kind = getValueAtPath(propsDraft.value, ['payload', 'media', 'kind'])
+    return kind === 'video' ? 'video' : 'image'
+  }
+
+  if (joined.includes('video')) return 'video'
+  if (joined.includes('poster')) return 'image'
+  if (joined.includes('image')) return 'image'
+  if (joined.includes('thumbnail')) return 'image'
+  if (joined.includes('photo')) return 'image'
+  return 'document'
 }
 
 async function updateField(field: FormField, value: unknown) {
@@ -892,6 +982,15 @@ onBeforeUnmount(() => {
                     :alt-text="getContentCardMediaAlt()"
                     @update:model-value="(value: string) => updateContentCardMediaField(['payload', 'media', 'src'], value)"
                     @update:alt-text="(value: string) => updateContentCardMediaField(['payload', 'media', 'alt'], value)"
+                  />
+
+                  <ComponentsPlaygroundMediaAssetField
+                    v-else-if="isMediaAssetField(field)"
+                    :model-value="getFieldValue(field)"
+                    :disabled="field.disabled"
+                    :media-type="getMediaAssetType(field)"
+                    :title="field.label"
+                    @update:model-value="(value: unknown) => updateField(field, value)"
                   />
 
                   <UCheckbox
