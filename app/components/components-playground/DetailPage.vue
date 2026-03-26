@@ -16,6 +16,7 @@ import {
   getSchemaType,
   getValueAtPath,
   normalizePropsDraft,
+  setValueAtPath,
 } from '../../utils/component-contract-form'
 
 type ViewportMode = 'desktop' | 'tablet' | 'mobile'
@@ -153,6 +154,12 @@ const tabItems = computed<Array<{ label: string, value: DetailTab }>>(() => {
   return items
 })
 
+const highContrastTabsUi = {
+  list: 'bg-zinc-100 rounded-lg',
+  indicator: 'rounded-md shadow-xs bg-zinc-900',
+  trigger: 'data-[state=inactive]:text-zinc-800 hover:data-[state=inactive]:not-disabled:text-zinc-950 data-[state=active]:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900',
+}
+
 const resolutionLabel = computed(() => {
   if (!detail.value) {
     return ''
@@ -164,6 +171,8 @@ const resolutionLabel = computed(() => {
 const viewportFrameStyle = computed(() => VIEWPORT_FRAME_STYLES[viewport.value])
 
 const formFields = computed<FormField[]>(() => buildFormFieldsFromDetail(detail.value))
+
+const visibleFormFields = computed(() => formFields.value.filter(field => !shouldHideField(field)))
 
 const contrastMatrix = computed<ContrastRow[]>(() => {
   const colors = themeColors.value
@@ -249,8 +258,62 @@ function getFieldValue(field: FormField): unknown {
   return getValueAtPath(propsDraft.value, field.path)
 }
 
+function isContentCardBodyField(field: FormField): boolean {
+  return detail.value?.slug === 'intro-card' && field.id === 'payload.body'
+}
+
+function isVideoDescriptionField(field: FormField): boolean {
+  return detail.value?.slug === 'video' && field.id === 'payload.description'
+}
+
+function isContentCardMediaSrcField(field: FormField): boolean {
+  return detail.value?.slug === 'intro-card' && field.id === 'payload.media.src'
+}
+
+function isMediaAssetField(field: FormField): boolean {
+  return field.customType === 'media-asset'
+}
+
+function shouldHideField(field: FormField): boolean {
+  return detail.value?.slug === 'intro-card' && field.id === 'payload.media.alt'
+}
+
+function getContentCardMediaAlt(): string {
+  const value = getValueAtPath(propsDraft.value, ['payload', 'media', 'alt'])
+  return typeof value === 'string' ? value : ''
+}
+
+function getMediaAssetType(field: FormField): string {
+  const joined = field.path.join('.').toLowerCase()
+
+  if (joined.includes('payload.media.file')) {
+    const kind = getValueAtPath(propsDraft.value, ['payload', 'media', 'kind'])
+    return kind === 'video' ? 'video' : 'image'
+  }
+
+  if (joined.includes('video')) return 'video'
+  if (joined.includes('poster')) return 'image'
+  if (joined.includes('image')) return 'image'
+  if (joined.includes('thumbnail')) return 'image'
+  if (joined.includes('photo')) return 'image'
+  return 'document'
+}
+
 async function updateField(field: FormField, value: unknown) {
   propsDraft.value = applyFieldUpdateToDraft(propsDraft.value, field, value)
+  await renderComponent()
+}
+
+async function updateContentCardMediaField(path: string[], value: unknown): Promise<void> {
+  const next = normalizePropsDraft(propsDraft.value)
+  setValueAtPath(next, path, value)
+
+  const currentKind = getValueAtPath(next, ['payload', 'media', 'kind'])
+  if (typeof getValueAtPath(next, ['payload', 'media', 'src']) === 'string' && getValueAtPath(next, ['payload', 'media', 'src'])) {
+    setValueAtPath(next, ['payload', 'media', 'kind'], currentKind === 'video' ? 'video' : 'image')
+  }
+
+  propsDraft.value = next
   await renderComponent()
 }
 
@@ -483,9 +546,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="h-full p-4 md:p-5">
-    <div class="flex h-full overflow-hidden">
-      <section class="flex min-h-0 flex-1 flex-col overflow-hidden">
+  <div class="h-full min-w-0 p-4 md:p-5">
+    <div class="flex h-full min-w-0 overflow-hidden">
+      <section class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div class="flex items-center border-b border-default bg-default p-4">
           <div class="min-w-0 flex-1">
             <div class="text-sm font-semibold">
@@ -503,6 +566,7 @@ onBeforeUnmount(() => {
               :items="viewportItems"
               size="sm"
               variant="pill"
+              :ui="highContrastTabsUi"
             />
             <div class="inline-flex items-center rounded-lg bg-elevated p-1 mb-2">
               <button
@@ -558,7 +622,7 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section class="flex w-[420px] flex-col border-l border-default bg-default">
+      <section class="flex w-[420px] shrink-0 flex-col border-l border-default bg-default">
         <div class="space-y-3 border-b border-default p-4">
           <UFormField label="Available Components">
             <USelect v-model="selectedSlug" :items="availableSlugs" class="w-full" />
@@ -572,17 +636,17 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <UTabs v-model="activeTab" :items="tabItems" class="border-b border-default p-4" />
+          <UTabs v-model="activeTab" :items="tabItems" class="border-b border-default p-4" :ui="highContrastTabsUi" />
 
           <div class="min-h-0 flex-1 overflow-auto p-4">
             <div v-if="activeTab === 'form'" class="space-y-4">
-              <div v-if="formFields.length === 0" class="text-sm text-muted">
+              <div v-if="visibleFormFields.length === 0" class="text-sm text-muted">
                 No editable form fields are available for this component yet.
               </div>
 
               <div v-else class="space-y-4">
                 <div
-                  v-for="field in formFields"
+                  v-for="field in visibleFormFields"
                   :key="field.id"
                   class="space-y-2 rounded-lg border border-default bg-elevated/40 p-3"
                 >
@@ -597,13 +661,40 @@ onBeforeUnmount(() => {
                     <div v-if="field.description" class="mt-1 text-xs text-muted">
                       {{ field.description }}
                     </div>
-                    <div v-if="field.disabled" class="mt-1 text-xs text-muted">
+                    <div
+                      v-if="field.disabled && !isContentCardMediaSrcField(field)"
+                      class="mt-1 text-xs text-muted"
+                    >
                       Managed from the referenced media/content source.
                     </div>
                   </div>
 
+                  <ComponentsPlaygroundRichTextMediaField
+                    v-if="isContentCardBodyField(field) || isVideoDescriptionField(field)"
+                    :model-value="String(getFieldValue(field) ?? '')"
+                    :placeholder="isVideoDescriptionField(field) ? 'Write video intro or supporting copy...' : 'Write content card content...'"
+                    @update:model-value="(value: string) => updateField(field, value)"
+                  />
+
+                  <ComponentsPlaygroundMediaImageField
+                    v-else-if="isContentCardMediaSrcField(field)"
+                    :model-value="String(getFieldValue(field) ?? '')"
+                    :alt-text="getContentCardMediaAlt()"
+                    @update:model-value="(value: string) => updateContentCardMediaField(['payload', 'media', 'src'], value)"
+                    @update:alt-text="(value: string) => updateContentCardMediaField(['payload', 'media', 'alt'], value)"
+                  />
+
+                  <ComponentsPlaygroundMediaAssetField
+                    v-else-if="isMediaAssetField(field)"
+                    :model-value="getFieldValue(field)"
+                    :disabled="field.disabled"
+                    :media-type="getMediaAssetType(field)"
+                    :title="field.label"
+                    @update:model-value="(value: unknown) => updateField(field, value)"
+                  />
+
                   <UCheckbox
-                    v-if="getSchemaType(field.schema) === 'boolean'"
+                    v-else-if="getSchemaType(field.schema) === 'boolean'"
                     :model-value="Boolean(getFieldValue(field))"
                     :disabled="field.disabled"
                     @update:model-value="(value: boolean) => updateField(field, value)"
@@ -611,7 +702,7 @@ onBeforeUnmount(() => {
 
                   <USelect
                     v-else-if="Array.isArray(field.schema.enum)"
-                    :items="field.schema.enum.map((value) => ({ label: String(value), value }))"
+                    :items="field.schema.enum.map((value) => ({ label: humanizeKey(String(value)), value }))"
                     label-key="label"
                     value-key="value"
                     :model-value="getFieldValue(field)"

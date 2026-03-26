@@ -9,6 +9,10 @@ export type JsonSchemaProperty = {
   description?: string
   properties?: Record<string, JsonSchemaProperty>
   required?: string[]
+  $ref?: string
+  oneOf?: JsonSchemaProperty[]
+  const?: unknown
+  $defs?: Record<string, JsonSchemaProperty>
 }
 
 export type FormField = {
@@ -21,6 +25,7 @@ export type FormField = {
   schema: JsonSchemaProperty
   multiline: boolean
   disabled: boolean
+  customType?: 'media-asset'
 }
 
 export const MEDIA_REFERENCE_KEYS = new Set(['src', 'url', 'imageUrl', 'thumbnailUrl', 'mediaUuid'])
