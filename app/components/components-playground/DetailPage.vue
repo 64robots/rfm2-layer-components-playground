@@ -5,33 +5,22 @@ import type {
   ComponentsCatalogPayload,
 } from '../../types/components-playground'
 import { useComponentsPlaygroundAdapter } from '../../composables/components-playground/useComponentsPlaygroundAdapter'
-import { useComponentsRuntime } from '../../composables/components-playground/useComponentsRuntime'
+import {
+  RFM_PLAYGROUND_MOUNT_SELECTOR,
+  useComponentIframePreview,
+} from '../../composables/components-playground/useComponentIframePreview'
+import type { FormField } from '../../utils/component-contract-form'
+import {
+  applyFieldUpdateToDraft,
+  buildFormFieldsFromDetail,
+  getSchemaType,
+  getValueAtPath,
+  normalizePropsDraft,
+} from '../../utils/component-contract-form'
 
 type ViewportMode = 'desktop' | 'tablet' | 'mobile'
 type DetailTab = 'form' | 'metadata' | 'schema' | 'contract' | 'a11y'
-type FormSection = 'payload' | 'config'
 type A11yImpact = 'critical' | 'serious' | 'moderate' | 'minor' | 'unknown'
-
-type JsonSchemaProperty = {
-  type?: string | string[]
-  enum?: unknown[]
-  title?: string
-  description?: string
-  properties?: Record<string, JsonSchemaProperty>
-  required?: string[]
-}
-
-type FormField = {
-  id: string
-  label: string
-  description?: string
-  path: string[]
-  required: boolean
-  section: FormSection
-  schema: JsonSchemaProperty
-  multiline: boolean
-  disabled: boolean
-}
 
 type A11yViolation = {
   id: string
@@ -99,17 +88,18 @@ const VIEWPORT_FRAME_STYLES: Record<ViewportMode, Record<string, string>> = {
   },
 }
 
-const MEDIA_REFERENCE_KEYS = new Set(['src', 'url', 'imageUrl', 'thumbnailUrl', 'mediaUuid'])
-const MULTILINE_FIELD_PATTERN = /(body|instructions|description|note|text|content|transcript)/i
-
 const route = useRoute()
 const router = useRouter()
 const runtimeConfig = useRuntimeConfig()
 const adapter = useComponentsPlaygroundAdapter()
-const runtime = useComponentsRuntime()
 
-const mountSelector = '#rfm-components-playground-mount'
 const iframeRef = ref<HTMLIFrameElement | null>(null)
+const {
+  runtime,
+  runtimeError,
+  renderPreview,
+  unmountPreview,
+} = useComponentIframePreview(iframeRef)
 
 const slug = computed(() => String(route.params.slug || '').trim())
 const hostMode = computed(() => String(runtimeConfig.public.componentsPlaygroundHost || 'builder'))
@@ -117,7 +107,6 @@ const isDeveloperHost = computed(() => hostMode.value === 'playground')
 
 const loading = ref(false)
 const loadError = ref('')
-const runtimeError = ref('')
 
 const catalog = ref<ComponentsCatalogPayload | null>(null)
 const detail = ref<ComponentsCatalogDetailPayload | null>(null)
@@ -174,17 +163,7 @@ const resolutionLabel = computed(() => {
 
 const viewportFrameStyle = computed(() => VIEWPORT_FRAME_STYLES[viewport.value])
 
-const formFields = computed<FormField[]>(() => {
-  const contract = detail.value?.compiledContract
-  if (!contract || typeof contract !== 'object') {
-    return []
-  }
-
-  const fields: FormField[] = []
-  collectSchemaFields(fields, contract.payload?.schema as JsonSchemaProperty | undefined, 'payload', ['payload'])
-  collectSchemaFields(fields, contract.config?.schema as JsonSchemaProperty | undefined, 'config', ['config'])
-  return fields
-})
+const formFields = computed<FormField[]>(() => buildFormFieldsFromDetail(detail.value))
 
 const contrastMatrix = computed<ContrastRow[]>(() => {
   const colors = themeColors.value
@@ -262,126 +241,8 @@ function createA11yCounts(): Record<A11yImpact, number> {
   }
 }
 
-function cloneDraftValue<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value ?? {})) as T
-}
-
-function normalizeDraft(value: Record<string, unknown> | null | undefined): Record<string, unknown> {
-  const next = cloneDraftValue(value || {})
-  if (!isRecord(next.payload)) {
-    next.payload = {}
-  }
-  if (!isRecord(next.config)) {
-    next.config = {}
-  }
-  if (!isRecord(next.interactionState)) {
-    next.interactionState = {}
-  }
-  return next
-}
-
 function setDraftFromObject(value: Record<string, unknown> | null | undefined) {
-  propsDraft.value = normalizeDraft(value)
-}
-
-function humanizeKey(value: string): string {
-  return value
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^\w/, (letter) => letter.toUpperCase())
-}
-
-function getSchemaType(schema: JsonSchemaProperty | undefined): string | null {
-  if (!schema) {
-    return null
-  }
-
-  if (Array.isArray(schema.type)) {
-    return schema.type.find((value) => value !== 'null') || null
-  }
-
-  return typeof schema.type === 'string' ? schema.type : null
-}
-
-function collectSchemaFields(
-  out: FormField[],
-  schema: JsonSchemaProperty | undefined,
-  section: FormSection,
-  path: string[],
-  parentRequired: string[] = [],
-) {
-  const properties = schema?.properties
-  if (!properties || typeof properties !== 'object') {
-    return
-  }
-
-  const required = Array.isArray(schema.required) ? schema.required : parentRequired
-
-  Object.entries(properties).forEach(([key, property]) => {
-    const nextPath = [...path, key]
-    const baseType = getSchemaType(property)
-
-    if (baseType === 'object' && property.properties && nextPath.length <= 3) {
-      collectSchemaFields(out, property, section, nextPath, Array.isArray(property.required) ? property.required : [])
-      return
-    }
-
-    if (baseType === 'array') {
-      return
-    }
-
-    if (baseType === 'string' || baseType === 'number' || baseType === 'boolean' || Array.isArray(property.enum)) {
-      out.push({
-        id: nextPath.join('.'),
-        label: property.title || humanizeKey(key),
-        description: property.description,
-        path: nextPath,
-        required: required.includes(key),
-        section,
-        schema: property,
-        multiline: baseType === 'string' && MULTILINE_FIELD_PATTERN.test(nextPath.join('.')),
-        disabled: MEDIA_REFERENCE_KEYS.has(key),
-      })
-    }
-  })
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-}
-
-function getValueAtPath(source: Record<string, unknown>, path: string[]): unknown {
-  return path.reduce<unknown>((current, segment) => {
-    if (!isRecord(current)) {
-      return undefined
-    }
-
-    return current[segment]
-  }, source)
-}
-
-function setValueAtPath(source: Record<string, unknown>, path: string[], value: unknown): Record<string, unknown> {
-  let current: Record<string, unknown> = source
-
-  path.forEach((segment, index) => {
-    const isLeaf = index === path.length - 1
-
-    if (isLeaf) {
-      current[segment] = value
-      return
-    }
-
-    const existing = current[segment]
-    if (!isRecord(existing)) {
-      current[segment] = {}
-    }
-
-    current = current[segment] as Record<string, unknown>
-  })
-
-  return source
+  propsDraft.value = normalizePropsDraft(value)
 }
 
 function getFieldValue(field: FormField): unknown {
@@ -389,34 +250,12 @@ function getFieldValue(field: FormField): unknown {
 }
 
 async function updateField(field: FormField, value: unknown) {
-  const next = normalizeDraft(propsDraft.value)
-
-  if (getSchemaType(field.schema) === 'number') {
-    const parsed = Number(value)
-    setValueAtPath(next, field.path, Number.isNaN(parsed) ? value : parsed)
-  } else if (getSchemaType(field.schema) === 'boolean') {
-    setValueAtPath(next, field.path, Boolean(value))
-  } else {
-    setValueAtPath(next, field.path, value)
-  }
-
-  propsDraft.value = next
+  propsDraft.value = applyFieldUpdateToDraft(propsDraft.value, field, value)
   await renderComponent()
 }
 
 function clearA11y() {
   a11yAudit.value = createEmptyA11yAudit()
-}
-
-async function ensureRuntimeLoaded() {
-  runtimeError.value = ''
-
-  try {
-    await runtime.loadRuntime()
-  } catch (error: unknown) {
-    runtimeError.value = error instanceof Error ? error.message : 'Failed to load runtime bundle.'
-    throw error
-  }
 }
 
 function getIframeDocument(): Document | null {
@@ -429,7 +268,7 @@ function getIframeWindow(): (Window & typeof globalThis) | null {
 
 function readThemeColors(): ThemeColors {
   const iframeDoc = getIframeDocument()
-  const mountEl = iframeDoc?.querySelector(mountSelector)
+  const mountEl = iframeDoc?.querySelector(RFM_PLAYGROUND_MOUNT_SELECTOR)
   const themeRoot = mountEl?.querySelector('.rfm-theme') || mountEl
   if (!themeRoot) {
     return { ...DEFAULT_THEME_COLORS }
@@ -454,85 +293,23 @@ function readThemeColors(): ThemeColors {
   }
 }
 
-async function prepareIframe(): Promise<void> {
-  const iframe = iframeRef.value
-  if (!iframe) {
-    throw new Error('Preview iframe not available.')
-  }
-
-  const iframeDoc = iframe.contentDocument
-  const iframeWin = iframe.contentWindow
-  if (!iframeDoc || !iframeWin) {
-    throw new Error('Cannot access preview iframe document.')
-  }
-
-  if (iframeDoc.querySelector(mountSelector)) {
-    return
-  }
-
-  const res = runtime.resolution.value
-  if (!res) {
-    throw new Error('Resolution not available.')
-  }
-
-  const cssUrl = res.bundleCssUrl || resolvePreviewAssetUrl(res.cdnBaseUrl, res.bundleCssKey)
-  const runtimeUrl = res.vueEsmUrl || resolvePreviewAssetUrl(res.cdnBaseUrl, res.vueEsmKey)
-
-  iframeDoc.open()
-  iframeDoc.write(`<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="${cssUrl}">
-<style>html,body{margin:0;padding:0;height:100%;background:#fff;}</style>
-</head><body>
-<div id="rfm-components-playground-mount" style="min-height:320px;padding:16px;"></div>
-<script type="module" src="${runtimeUrl}"><\/script>
-</body></html>`)
-  iframeDoc.close()
-
-  for (let i = 0; i < 100; i++) {
-    if (iframeWin.__RFM_COMPONENTS_VUE__) {
-      return
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  }
-
-  throw new Error('Timed out waiting for runtime inside preview iframe.')
-}
-
-function resolvePreviewAssetUrl(cdnBaseUrl: string, key: string): string {
-  if (/^https?:\/\//i.test(String(key || ''))) {
-    return String(key)
-  }
-  const trimmedBase = String(cdnBaseUrl || '').replace(/\/+$/, '')
-  const trimmedKey = String(key || '').replace(/^\/+/, '')
-  return `${trimmedBase}/${trimmedKey}`
-}
-
 async function renderComponent() {
   if (!detail.value) {
     return
   }
 
-  await ensureRuntimeLoaded()
-  await prepareIframe()
-
-  const iframeWin = getIframeWindow()
-  const iframeRuntime = iframeWin?.__RFM_COMPONENTS_VUE__
-  if (!iframeRuntime) {
-    throw new Error('Runtime not available inside preview iframe.')
+  try {
+    runtimeError.value = ''
+    await renderPreview({
+      slug: detail.value.slug,
+      props: propsDraft.value,
+      themeVariant: themeVariant.value,
+    })
+    await nextTick()
+    themeColors.value = readThemeColors()
+  } catch (error: unknown) {
+    runtimeError.value = error instanceof Error ? error.message : 'Preview render failed.'
   }
-
-  iframeRuntime.renderPod({
-    slug: detail.value.slug,
-    mountSelector,
-    props: propsDraft.value,
-    themeVariant: themeVariant.value,
-  })
-
-  await nextTick()
-  themeColors.value = readThemeColors()
 }
 
 async function runA11yChecks() {
@@ -541,7 +318,7 @@ async function runA11yChecks() {
   }
 
   const iframeDoc = getIframeDocument()
-  const mountEl = iframeDoc?.querySelector(mountSelector)
+  const mountEl = iframeDoc?.querySelector(RFM_PLAYGROUND_MOUNT_SELECTOR)
   if (!mountEl) {
     a11yAudit.value = {
       ...createEmptyA11yAudit(),
@@ -688,18 +465,10 @@ async function loadData() {
   }
 }
 
-function unmountFromIframe() {
-  const iframeWin = getIframeWindow()
-  const iframeRuntime = iframeWin?.__RFM_COMPONENTS_VUE__
-  if (iframeRuntime) {
-    iframeRuntime.unmount({ mountSelector })
-  }
-}
-
 watch(
   () => slug.value,
   async () => {
-    unmountFromIframe()
+    unmountPreview()
     await loadData()
   },
 )
@@ -709,7 +478,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  unmountFromIframe()
+  unmountPreview()
 })
 </script>
 
