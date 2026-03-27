@@ -41,7 +41,9 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
       throw new Error('Cannot access preview iframe document.')
     }
 
-    if (iframeDoc.querySelector(RFM_PLAYGROUND_MOUNT_SELECTOR)) {
+    const mountReady = Boolean(iframeDoc.querySelector(RFM_PLAYGROUND_MOUNT_SELECTOR))
+    const runtimeReady = Boolean(iframeWin.__RFM_COMPONENTS_VUE__)
+    if (mountReady && runtimeReady) {
       return
     }
 
