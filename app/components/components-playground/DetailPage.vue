@@ -174,6 +174,20 @@ const formFields = computed<FormField[]>(() => buildFormFieldsFromDetail(detail.
 
 const visibleFormFields = computed(() => formFields.value.filter(field => !shouldHideField(field)))
 
+type FormFieldGroup = { key: string, sectionLabel: string | null, fields: FormField[] }
+
+const formFieldGroups = computed<FormFieldGroup[]>(() => {
+  const visible = visibleFormFields.value
+  const payload = visible.filter(f => f.section === 'payload')
+  const config = visible.filter(f => f.section === 'config')
+  const groups: FormFieldGroup[] = []
+  if (payload.length)
+    groups.push({ key: 'payload', sectionLabel: null, fields: payload })
+  if (config.length)
+    groups.push({ key: 'config', sectionLabel: 'Config', fields: config })
+  return groups
+})
+
 const contrastMatrix = computed<ContrastRow[]>(() => {
   const colors = themeColors.value
   const pairs = [
@@ -644,96 +658,107 @@ onBeforeUnmount(() => {
                 No editable form fields are available for this component yet.
               </div>
 
-              <div v-else class="space-y-4">
+              <div v-else class="space-y-3">
                 <div
-                  v-for="field in visibleFormFields"
-                  :key="field.id"
-                  class="space-y-2 rounded-lg border border-default bg-elevated/40 p-3"
+                  v-for="group in formFieldGroups"
+                  :key="group.key"
+                  class="rounded-md border border-default bg-elevated/40 p-3"
                 >
-                  <div>
-                    <div class="text-xs font-semibold text-toned">
-                      {{ field.section === 'payload' ? 'Payload' : 'Config' }}
-                    </div>
-                    <div class="mt-1 text-sm font-medium text-highlighted">
-                      {{ field.label }}
-                      <span v-if="field.required" class="text-error">*</span>
-                    </div>
-                    <div v-if="field.description" class="mt-1 text-xs text-muted">
-                      {{ field.description }}
-                    </div>
+                  <p
+                    v-if="group.sectionLabel"
+                    class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-toned"
+                  >
+                    {{ group.sectionLabel }}
+                  </p>
+                  <div class="space-y-2">
                     <div
-                      v-if="field.disabled && !isContentCardMediaSrcField(field)"
-                      class="mt-1 text-xs text-muted"
+                      v-for="field in group.fields"
+                      :key="field.id"
+                      class="space-y-2 rounded-md border border-default/70 bg-default/40 p-2"
                     >
-                      Managed from the referenced media/content source.
+                      <div>
+                        <div class="text-sm font-medium text-highlighted">
+                          {{ field.label }}
+                          <span v-if="field.required" class="text-error">*</span>
+                        </div>
+                        <div v-if="field.description" class="mt-0.5 text-xs text-muted">
+                          {{ field.description }}
+                        </div>
+                        <div
+                          v-if="field.disabled && !isContentCardMediaSrcField(field)"
+                          class="mt-0.5 text-xs text-muted"
+                        >
+                          Managed from the referenced media/content source.
+                        </div>
+                      </div>
+
+                      <ComponentsPlaygroundRichTextMediaField
+                        v-if="isContentCardBodyField(field) || isVideoDescriptionField(field)"
+                        :model-value="String(getFieldValue(field) ?? '')"
+                        :placeholder="isVideoDescriptionField(field) ? 'Write video intro or supporting copy...' : 'Write content card content...'"
+                        @update:model-value="(value) => updateField(field, value)"
+                      />
+
+                      <ComponentsPlaygroundMediaImageField
+                        v-else-if="isContentCardMediaSrcField(field)"
+                        :model-value="String(getFieldValue(field) ?? '')"
+                        :alt-text="getContentCardMediaAlt()"
+                        @update:model-value="(value) => updateContentCardMediaField(['payload', 'media', 'src'], value)"
+                        @update:alt-text="(value) => updateContentCardMediaField(['payload', 'media', 'alt'], value)"
+                      />
+
+                      <ComponentsPlaygroundMediaAssetField
+                        v-else-if="isMediaAssetField(field)"
+                        :model-value="getFieldValue(field)"
+                        :disabled="field.disabled"
+                        :media-type="getMediaAssetType(field)"
+                        :title="field.label"
+                        @update:model-value="(value) => updateField(field, value)"
+                      />
+
+                      <UCheckbox
+                        v-else-if="getSchemaType(field.schema) === 'boolean'"
+                        :model-value="Boolean(getFieldValue(field))"
+                        :disabled="field.disabled"
+                        @update:model-value="(value) => updateField(field, value)"
+                      />
+
+                      <USelect
+                        v-else-if="Array.isArray(field.schema.enum)"
+                        :items="field.schema.enum.map((value) => ({ label: humanizeKey(String(value)), value }))"
+                        label-key="label"
+                        value-key="value"
+                        :model-value="getFieldValue(field)"
+                        :disabled="field.disabled"
+                        variant="soft"
+                        size="sm"
+                        class="w-full"
+                        @update:model-value="(value) => updateField(field, value)"
+                      />
+
+                      <UTextarea
+                        v-else-if="field.multiline"
+                        :model-value="String(getFieldValue(field) ?? '')"
+                        :disabled="field.disabled"
+                        :rows="field.section === 'payload' ? 5 : 3"
+                        variant="soft"
+                        size="sm"
+                        class="w-full"
+                        @update:model-value="(value) => updateField(field, value)"
+                      />
+
+                      <UInput
+                        v-else
+                        :type="getSchemaType(field.schema) === 'number' ? 'number' : 'text'"
+                        :model-value="String(getFieldValue(field) ?? '')"
+                        :disabled="field.disabled"
+                        variant="soft"
+                        size="sm"
+                        class="w-full"
+                        @update:model-value="(value) => updateField(field, value)"
+                      />
                     </div>
                   </div>
-
-                  <ComponentsPlaygroundRichTextMediaField
-                    v-if="isContentCardBodyField(field) || isVideoDescriptionField(field)"
-                    :model-value="String(getFieldValue(field) ?? '')"
-                    :placeholder="isVideoDescriptionField(field) ? 'Write video intro or supporting copy...' : 'Write content card content...'"
-                    @update:model-value="(value: string) => updateField(field, value)"
-                  />
-
-                  <ComponentsPlaygroundMediaImageField
-                    v-else-if="isContentCardMediaSrcField(field)"
-                    :model-value="String(getFieldValue(field) ?? '')"
-                    :alt-text="getContentCardMediaAlt()"
-                    @update:model-value="(value: string) => updateContentCardMediaField(['payload', 'media', 'src'], value)"
-                    @update:alt-text="(value: string) => updateContentCardMediaField(['payload', 'media', 'alt'], value)"
-                  />
-
-                  <ComponentsPlaygroundMediaAssetField
-                    v-else-if="isMediaAssetField(field)"
-                    :model-value="getFieldValue(field)"
-                    :disabled="field.disabled"
-                    :media-type="getMediaAssetType(field)"
-                    :title="field.label"
-                    @update:model-value="(value: unknown) => updateField(field, value)"
-                  />
-
-                  <UCheckbox
-                    v-else-if="getSchemaType(field.schema) === 'boolean'"
-                    :model-value="Boolean(getFieldValue(field))"
-                    :disabled="field.disabled"
-                    @update:model-value="(value: boolean) => updateField(field, value)"
-                  />
-
-                  <USelect
-                    v-else-if="Array.isArray(field.schema.enum)"
-                    :items="field.schema.enum.map((value) => ({ label: humanizeKey(String(value)), value }))"
-                    label-key="label"
-                    value-key="value"
-                    :model-value="getFieldValue(field)"
-                    :disabled="field.disabled"
-                    variant="soft"
-                    size="sm"
-                    class="w-full"
-                    @update:model-value="(value: unknown) => updateField(field, value)"
-                  />
-
-                  <UTextarea
-                    v-else-if="field.multiline"
-                    :model-value="String(getFieldValue(field) ?? '')"
-                    :disabled="field.disabled"
-                    :rows="field.section === 'payload' ? 5 : 3"
-                    variant="soft"
-                    size="sm"
-                    class="w-full"
-                    @update:model-value="(value: string) => updateField(field, value)"
-                  />
-
-                  <UInput
-                    v-else
-                    :type="getSchemaType(field.schema) === 'number' ? 'number' : 'text'"
-                    :model-value="String(getFieldValue(field) ?? '')"
-                    :disabled="field.disabled"
-                    variant="soft"
-                    size="sm"
-                    class="w-full"
-                    @update:model-value="(value: string) => updateField(field, value)"
-                  />
                 </div>
               </div>
             </div>

@@ -17,6 +17,14 @@ const emit = defineEmits<{
 const editorRef = ref<{ editor?: unknown } | null>(null)
 const mediaPickerOpen = ref(false)
 
+const editorImageOptions = {
+  inline: true as const,
+  HTMLAttributes: {
+    referrerpolicy: 'no-referrer',
+    style: 'max-width:100%;height:auto;',
+  },
+}
+
 const editorExtensions = [
   Underline,
   Link.configure({
@@ -106,12 +114,20 @@ function insertImageMarkup(selection: MediaLibrarySelection): void {
   const alt = selection.item.altText || selection.item.originalName || selection.item.name || ''
 
   if (editor?.chain) {
-    editor.chain().focus().setImage({
+    const title = selection.item.originalName || selection.item.name || undefined
+    if (editor.chain().focus().setImage({
       src: selection.url,
       alt,
-      title: selection.item.originalName || selection.item.name || undefined,
-    }).run()
-    return
+      title,
+    }).run()) {
+      return
+    }
+    const escapedUrl = escapeHtmlAttribute(selection.url)
+    const escapedAlt = escapeHtmlAttribute(alt)
+    const titleAttr = title ? ` title="${escapeHtmlAttribute(title)}"` : ''
+    if (editor.chain().focus().insertContent(`<img src="${escapedUrl}" alt="${escapedAlt}"${titleAttr} />`).run()) {
+      return
+    }
   }
 
   const escapedUrl = escapeHtmlAttribute(selection.url)
@@ -136,6 +152,7 @@ function escapeHtmlAttribute(value: string): string {
       ref="editorRef"
       v-model="model"
       content-type="html"
+      :image="editorImageOptions"
       :extensions="editorExtensions"
       :editable="!disabled"
       :placeholder="placeholder || 'Write content card content...'"
