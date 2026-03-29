@@ -9,13 +9,16 @@ import {
   RFM_PLAYGROUND_MOUNT_SELECTOR,
   useComponentIframePreview,
 } from '../../composables/components-playground/useComponentIframePreview'
-import type { FormField } from '../../utils/component-contract-form'
+import type { FormField, FormFieldPanel } from '../../utils/component-contract-form'
 import {
   applyFieldUpdateToDraft,
   buildFormFieldsFromDetail,
   getSchemaType,
   getValueAtPath,
+  exclusiveCorrectArrayPathForField,
+  isExclusiveCorrectRadioChecked,
   normalizePropsDraft,
+  partitionFieldsByItemPanels,
   setValueAtPath,
 } from '../../utils/component-contract-form'
 
@@ -170,21 +173,34 @@ const resolutionLabel = computed(() => {
 
 const viewportFrameStyle = computed(() => VIEWPORT_FRAME_STYLES[viewport.value])
 
-const formFields = computed<FormField[]>(() => buildFormFieldsFromDetail(detail.value))
+const formFields = computed<FormField[]>(() => buildFormFieldsFromDetail(detail.value, propsDraft.value))
 
 const visibleFormFields = computed(() => formFields.value.filter(field => !shouldHideField(field)))
 
-type FormFieldGroup = { key: string, sectionLabel: string | null, fields: FormField[] }
+type FormFieldGroup = {
+  key: string
+  sectionLabel: string | null
+  standaloneFields: FormField[]
+  panels: FormFieldPanel[]
+}
 
 const formFieldGroups = computed<FormFieldGroup[]>(() => {
   const visible = visibleFormFields.value
-  const payload = visible.filter(f => f.section === 'payload')
-  const config = visible.filter(f => f.section === 'config')
+  const payloadFields = visible.filter(f => f.section === 'payload')
+  const configFields = visible.filter(f => f.section === 'config')
   const groups: FormFieldGroup[] = []
-  if (payload.length)
-    groups.push({ key: 'payload', sectionLabel: null, fields: payload })
-  if (config.length)
-    groups.push({ key: 'config', sectionLabel: 'Config', fields: config })
+  if (payloadFields.length) {
+    const { standalone, panels } = partitionFieldsByItemPanels(payloadFields)
+    groups.push({ key: 'payload', sectionLabel: null, standaloneFields: standalone, panels })
+  }
+  if (configFields.length) {
+    groups.push({
+      key: 'config',
+      sectionLabel: 'Config',
+      standaloneFields: configFields,
+      panels: [],
+    })
+  }
   return groups
 })
 
@@ -270,6 +286,18 @@ function setDraftFromObject(value: Record<string, unknown> | null | undefined) {
 
 function getFieldValue(field: FormField): unknown {
   return getValueAtPath(propsDraft.value, field.path)
+}
+
+function exclusiveCorrectRadioGroupName(field: FormField): string {
+  const base = slug.value
+  const arrayPath = exclusiveCorrectArrayPathForField(field)
+  return arrayPath
+    ? `exclusive-correct-${base}-${arrayPath.join('-')}`
+    : `exclusive-correct-${base}`
+}
+
+function isSchemeCorrectRadioChecked(field: FormField): boolean {
+  return isExclusiveCorrectRadioChecked(propsDraft.value, field)
 }
 
 function isContentCardBodyField(field: FormField): boolean {
@@ -672,7 +700,7 @@ onBeforeUnmount(() => {
                   </p>
                   <div class="space-y-2">
                     <div
-                      v-for="field in group.fields"
+                      v-for="field in group.standaloneFields"
                       :key="field.id"
                       class="space-y-2 rounded-md border border-default/70 bg-default/40 p-2"
                     >
@@ -716,6 +744,17 @@ onBeforeUnmount(() => {
                         @update:model-value="(value) => updateField(field, value)"
                       />
 
+                      <input
+                        v-else-if="field.customType === 'scheme-correct-radio'"
+                        type="radio"
+                        class="size-4 shrink-0 accent-primary"
+                        :name="exclusiveCorrectRadioGroupName(field)"
+                        :checked="isSchemeCorrectRadioChecked(field)"
+                        :disabled="field.disabled"
+                        :aria-label="field.label"
+                        @change="updateField(field, true)"
+                      >
+
                       <UCheckbox
                         v-else-if="getSchemaType(field.schema) === 'boolean'"
                         :model-value="Boolean(getFieldValue(field))"
@@ -757,6 +796,116 @@ onBeforeUnmount(() => {
                         class="w-full"
                         @update:model-value="(value) => updateField(field, value)"
                       />
+                    </div>
+
+                    <div
+                      v-for="panel in group.panels"
+                      :key="panel.id"
+                      class="rounded-md border border-default bg-default/25 p-2.5"
+                    >
+                      <p class="mb-2 text-sm font-semibold text-highlighted">
+                        {{ panel.title }}
+                      </p>
+                      <div class="space-y-2">
+                        <div
+                          v-for="field in panel.fields"
+                          :key="field.id"
+                          class="space-y-2 rounded-md border border-default/60 bg-default/40 p-2"
+                        >
+                          <div>
+                            <div class="text-sm font-medium text-highlighted">
+                              {{ field.label }}
+                              <span v-if="field.required" class="text-error">*</span>
+                            </div>
+                            <div v-if="field.description" class="mt-0.5 text-xs text-muted">
+                              {{ field.description }}
+                            </div>
+                            <div
+                              v-if="field.disabled && !isContentCardMediaSrcField(field)"
+                              class="mt-0.5 text-xs text-muted"
+                            >
+                              Managed from the referenced media/content source.
+                            </div>
+                          </div>
+
+                          <ComponentsPlaygroundRichTextMediaField
+                            v-if="isContentCardBodyField(field) || isVideoDescriptionField(field)"
+                            :model-value="String(getFieldValue(field) ?? '')"
+                            :placeholder="isVideoDescriptionField(field) ? 'Write video intro or supporting copy...' : 'Write content card content...'"
+                            @update:model-value="(value) => updateField(field, value)"
+                          />
+
+                          <ComponentsPlaygroundMediaImageField
+                            v-else-if="isContentCardMediaSrcField(field)"
+                            :model-value="String(getFieldValue(field) ?? '')"
+                            :alt-text="getContentCardMediaAlt()"
+                            @update:model-value="(value) => updateContentCardMediaField(['payload', 'media', 'src'], value)"
+                            @update:alt-text="(value) => updateContentCardMediaField(['payload', 'media', 'alt'], value)"
+                          />
+
+                          <ComponentsPlaygroundMediaAssetField
+                            v-else-if="isMediaAssetField(field)"
+                            :model-value="getFieldValue(field)"
+                            :disabled="field.disabled"
+                            :media-type="getMediaAssetType(field)"
+                            :title="field.label"
+                            @update:model-value="(value) => updateField(field, value)"
+                          />
+
+                          <input
+                            v-else-if="field.customType === 'scheme-correct-radio'"
+                            type="radio"
+                            class="size-4 shrink-0 accent-primary"
+                            :name="exclusiveCorrectRadioGroupName(field)"
+                            :checked="isSchemeCorrectRadioChecked(field)"
+                            :disabled="field.disabled"
+                            :aria-label="field.label"
+                            @change="updateField(field, true)"
+                          >
+
+                          <UCheckbox
+                            v-else-if="getSchemaType(field.schema) === 'boolean'"
+                            :model-value="Boolean(getFieldValue(field))"
+                            :disabled="field.disabled"
+                            @update:model-value="(value) => updateField(field, value)"
+                          />
+
+                          <USelect
+                            v-else-if="Array.isArray(field.schema.enum)"
+                            :items="field.schema.enum.map((value) => ({ label: humanizeKey(String(value)), value }))"
+                            label-key="label"
+                            value-key="value"
+                            :model-value="getFieldValue(field)"
+                            :disabled="field.disabled"
+                            variant="soft"
+                            size="sm"
+                            class="w-full"
+                            @update:model-value="(value) => updateField(field, value)"
+                          />
+
+                          <UTextarea
+                            v-else-if="field.multiline"
+                            :model-value="String(getFieldValue(field) ?? '')"
+                            :disabled="field.disabled"
+                            :rows="field.section === 'payload' ? 5 : 3"
+                            variant="soft"
+                            size="sm"
+                            class="w-full"
+                            @update:model-value="(value) => updateField(field, value)"
+                          />
+
+                          <UInput
+                            v-else
+                            :type="getSchemaType(field.schema) === 'number' ? 'number' : 'text'"
+                            :model-value="String(getFieldValue(field) ?? '')"
+                            :disabled="field.disabled"
+                            variant="soft"
+                            size="sm"
+                            class="w-full"
+                            @update:model-value="(value) => updateField(field, value)"
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
