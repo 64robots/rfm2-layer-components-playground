@@ -301,7 +301,8 @@ function isSchemeCorrectRadioChecked(field: FormField): boolean {
 }
 
 function isContentCardBodyField(field: FormField): boolean {
-  return detail.value?.slug === 'intro-card' && field.id === 'payload.body'
+  const slug = detail.value?.slug || ''
+  return (slug === 'intro-card' || slug === 'content-card') && field.id === 'payload.body'
 }
 
 function isVideoDescriptionField(field: FormField): boolean {
@@ -309,7 +310,11 @@ function isVideoDescriptionField(field: FormField): boolean {
 }
 
 function isContentCardMediaSrcField(field: FormField): boolean {
-  return detail.value?.slug === 'intro-card' && field.id === 'payload.media.src'
+  const slug = detail.value?.slug || ''
+  if (slug !== 'intro-card' && slug !== 'content-card') {
+    return false
+  }
+  return field.id === 'payload.media.file.url' || field.id === 'payload.media.src'
 }
 
 function isMediaAssetField(field: FormField): boolean {
@@ -317,12 +322,20 @@ function isMediaAssetField(field: FormField): boolean {
 }
 
 function shouldHideField(field: FormField): boolean {
-  return detail.value?.slug === 'intro-card' && field.id === 'payload.media.alt'
+  const slug = detail.value?.slug || ''
+  if (slug !== 'intro-card' && slug !== 'content-card') {
+    return false
+  }
+  return field.id === 'payload.media.file.alt' || field.id === 'payload.media.alt'
 }
 
 function getContentCardMediaAlt(): string {
-  const value = getValueAtPath(propsDraft.value, ['payload', 'media', 'alt'])
-  return typeof value === 'string' ? value : ''
+  const fromFile = getValueAtPath(propsDraft.value, ['payload', 'media', 'file', 'alt'])
+  if (typeof fromFile === 'string') {
+    return fromFile
+  }
+  const legacy = getValueAtPath(propsDraft.value, ['payload', 'media', 'alt'])
+  return typeof legacy === 'string' ? legacy : ''
 }
 
 function getMediaAssetType(field: FormField): string {
@@ -350,9 +363,8 @@ async function updateContentCardMediaField(path: string[], value: unknown): Prom
   const next = normalizePropsDraft(propsDraft.value)
   setValueAtPath(next, path, value)
 
-  const currentKind = getValueAtPath(next, ['payload', 'media', 'kind'])
-  if (typeof getValueAtPath(next, ['payload', 'media', 'src']) === 'string' && getValueAtPath(next, ['payload', 'media', 'src'])) {
-    setValueAtPath(next, ['payload', 'media', 'kind'], currentKind === 'video' ? 'video' : 'image')
+  if (path.join('.') === 'payload.media.file.url') {
+    setValueAtPath(next, ['payload', 'media', 'file', 'source'], 'external')
   }
 
   propsDraft.value = next
@@ -731,8 +743,8 @@ onBeforeUnmount(() => {
                         v-else-if="isContentCardMediaSrcField(field)"
                         :model-value="String(getFieldValue(field) ?? '')"
                         :alt-text="getContentCardMediaAlt()"
-                        @update:model-value="(value) => updateContentCardMediaField(['payload', 'media', 'src'], value)"
-                        @update:alt-text="(value) => updateContentCardMediaField(['payload', 'media', 'alt'], value)"
+                        @update:model-value="(value) => updateContentCardMediaField(['payload', 'media', 'file', 'url'], value)"
+                        @update:alt-text="(value) => updateContentCardMediaField(['payload', 'media', 'file', 'alt'], value)"
                       />
 
                       <ComponentsPlaygroundMediaAssetField
@@ -779,6 +791,7 @@ onBeforeUnmount(() => {
                         v-else-if="field.multiline"
                         :model-value="String(getFieldValue(field) ?? '')"
                         :disabled="field.disabled"
+                        :readonly="Boolean(field.readOnly)"
                         :rows="field.section === 'payload' ? 5 : 3"
                         variant="soft"
                         size="sm"
@@ -791,6 +804,7 @@ onBeforeUnmount(() => {
                         :type="getSchemaType(field.schema) === 'number' ? 'number' : 'text'"
                         :model-value="String(getFieldValue(field) ?? '')"
                         :disabled="field.disabled"
+                        :readonly="Boolean(field.readOnly)"
                         variant="soft"
                         size="sm"
                         class="w-full"
@@ -839,8 +853,8 @@ onBeforeUnmount(() => {
                             v-else-if="isContentCardMediaSrcField(field)"
                             :model-value="String(getFieldValue(field) ?? '')"
                             :alt-text="getContentCardMediaAlt()"
-                            @update:model-value="(value) => updateContentCardMediaField(['payload', 'media', 'src'], value)"
-                            @update:alt-text="(value) => updateContentCardMediaField(['payload', 'media', 'alt'], value)"
+                            @update:model-value="(value) => updateContentCardMediaField(['payload', 'media', 'file', 'url'], value)"
+                            @update:alt-text="(value) => updateContentCardMediaField(['payload', 'media', 'file', 'alt'], value)"
                           />
 
                           <ComponentsPlaygroundMediaAssetField
@@ -887,6 +901,7 @@ onBeforeUnmount(() => {
                             v-else-if="field.multiline"
                             :model-value="String(getFieldValue(field) ?? '')"
                             :disabled="field.disabled"
+                            :readonly="Boolean(field.readOnly)"
                             :rows="field.section === 'payload' ? 5 : 3"
                             variant="soft"
                             size="sm"
@@ -899,6 +914,7 @@ onBeforeUnmount(() => {
                             :type="getSchemaType(field.schema) === 'number' ? 'number' : 'text'"
                             :model-value="String(getFieldValue(field) ?? '')"
                             :disabled="field.disabled"
+                            :readonly="Boolean(field.readOnly)"
                             variant="soft"
                             size="sm"
                             class="w-full"

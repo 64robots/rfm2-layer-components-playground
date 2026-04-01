@@ -34,7 +34,14 @@ export type FormField = {
   schema: JsonSchemaProperty
   multiline: boolean
   disabled: boolean
-  customType?: 'media-asset' | 'scheme-correct-radio'
+  /** Editable but not writable (e.g. derived page count); avoids “managed source” disabled styling. */
+  readOnly?: boolean
+  customType?: 'media-asset' | 'scheme-correct-radio' | 'media-url' | 'string-array-lines'
+  /**
+   * When `customType` is `media-url`, limits the media library and file picker.
+   * `any` = images, videos, documents; `image` = images only (e.g. suspect headshots).
+   */
+  mediaUrlMode?: 'any' | 'image'
   /** When set, the field belongs to a grouped row (e.g. decision-point Option 1). */
   itemPanel?: FormFieldItemPanel
 }
@@ -78,9 +85,92 @@ export function partitionFieldsByItemPanels(fields: FormField[]): {
   return { standalone, panels }
 }
 
+/** Solve-the-case lesson editor: intro then suspects arrays, then justification / evidence heading / verdict title, then remaining scalars. */
+const SOLVE_CASE_PAYLOAD_CHUNK_BEFORE_ARRAYS: readonly string[] = [
+  'payload.title',
+  'payload.intro',
+]
+
+const SOLVE_CASE_PAYLOAD_CHUNK_AFTER_ARRAYS_HEAD: readonly string[] = [
+  'payload.justificationLabel',
+  'payload.justificationPlaceholder',
+  'payload.evidenceTitle',
+  'payload.evidenceHighlights',
+]
+
+const SOLVE_CASE_PAYLOAD_REST_FIELD_RANK: Record<string, number> = {
+  'payload.supportingSectionTitle': 0,
+  'payload.supportingSectionIntro': 1,
+  'payload.requireJustification': 2,
+  'payload.verdictTitle': 3,
+}
+
+function rankSolveCaseRestStandaloneField(id: string): number {
+  return Object.prototype.hasOwnProperty.call(SOLVE_CASE_PAYLOAD_REST_FIELD_RANK, id)
+    ? SOLVE_CASE_PAYLOAD_REST_FIELD_RANK[id]!
+    : 1000
+}
+
+/** Fraud scheme family lesson editor: prompt before schemes arrays, then remaining scalars after. */
+const FRAUD_SCHEME_PAYLOAD_CHUNK_BEFORE_ARRAYS: readonly string[] = [
+  'payload.prompt',
+]
+
+/**
+ * Split payload standalone fields for the lesson activity editor so top-level object arrays (suspects, etc.)
+ * can be rendered between intro copy and later scalars.
+ */
+export function standalonePayloadFieldChunksForLessonEditor(
+  payloadStandaloneFields: FormField[],
+  componentSlug: string | undefined,
+): FormField[][] {
+  if (isFraudSchemeFamilySlug(componentSlug)) {
+    const before = FRAUD_SCHEME_PAYLOAD_CHUNK_BEFORE_ARRAYS
+      .map(id => payloadStandaloneFields.find(f => f.id === id))
+      .filter((f): f is FormField => Boolean(f))
+    const used = new Set(before.map(f => f.id))
+    const rest = payloadStandaloneFields.filter(f => !used.has(f.id))
+    // Two slots: prompt before schemes array, then remaining fields after.
+    return [before, [], rest]
+  }
+
+  if (!isSolveTheCaseFamilySlug(componentSlug)) {
+    return [payloadStandaloneFields]
+  }
+  const before = SOLVE_CASE_PAYLOAD_CHUNK_BEFORE_ARRAYS
+    .map(id => payloadStandaloneFields.find(f => f.id === id))
+    .filter((f): f is FormField => Boolean(f))
+  const used = new Set(before.map(f => f.id))
+  const afterHead = SOLVE_CASE_PAYLOAD_CHUNK_AFTER_ARRAYS_HEAD
+    .map(id => payloadStandaloneFields.find(f => f.id === id))
+    .filter((f): f is FormField => Boolean(f))
+  afterHead.forEach(f => used.add(f.id))
+  const rest = payloadStandaloneFields
+    .filter(f => !used.has(f.id))
+    .sort(
+      (a, b) =>
+        rankSolveCaseRestStandaloneField(a.id) - rankSolveCaseRestStandaloneField(b.id)
+        || a.id.localeCompare(b.id),
+    )
+  // Always three slots so arrays render after the intro chunk even when `before` is empty.
+  return [before, afterHead, rest]
+}
+
+export function fieldValueAsMultilineString(draft: Record<string, unknown>, field: FormField): string {
+  if (field.customType === 'string-array-lines') {
+    const v = getValueAtPath(draft, field.path)
+    if (!Array.isArray(v)) {
+      return ''
+    }
+    return v.filter((x): x is string => typeof x === 'string').join('\n')
+  }
+  const v = getValueAtPath(draft, field.path)
+  return String(v ?? '')
+}
+
 export const MEDIA_REFERENCE_KEYS = new Set(['src', 'url', 'imageUrl', 'thumbnailUrl', 'mediaUuid'])
 export const MULTILINE_FIELD_PATTERN
-  = /(body|instructions|description|note|text|content|transcript|summary|helperText)/i
+  = /(body|instructions|intro|description|note|text|content|transcript|summary|helperText)/i
 
 /** Catalog slugs that use the unified solve-the-case-family contract. */
 export function isSolveTheCaseFamilySlug(slug: string | undefined): boolean {
@@ -91,6 +181,48 @@ export function isSolveTheCaseFamilySlug(slug: string | undefined): boolean {
     slug === 'solve-the-case-family'
     || slug.startsWith('solve_the_case')
     || slug === 'solve-the-case-connection'
+  )
+}
+
+/** Investigation desktop + accessible variants share the same payload shape. */
+export function isInvestigationActivitySlug(slug: string | undefined): boolean {
+  return slug === 'investigation' || slug === 'accessible-investigation'
+}
+
+/** Fraud triangle catalog slug (`payload.documents[]` + title / description). */
+export function isFraudTriangleSlug(slug: string | undefined): boolean {
+  return slug === 'fraud-triangle'
+}
+
+/** Synopsis catalog slug (`payload.intro` + `sections[]`). */
+export function isSynopsisSlug(slug: string | undefined): boolean {
+  return slug === 'synopsis'
+}
+
+/** Fraud scheme family catalog slugs. */
+export function isFraudSchemeFamilySlug(slug: string | undefined): boolean {
+  if (!slug) {
+    return false
+  }
+  return (
+    slug === 'fraud-scheme-family'
+    || slug === 'fraud-scheme'
+    || slug === 'fraud-scheme-two-attempts'
+    || slug === 'fraud-scheme-review'
+  )
+}
+
+/** Quiz family catalog slugs (unified `questions[].kind` + `options`). */
+export function isQuizFamilySlug(slug: string | undefined): boolean {
+  if (!slug) {
+    return false
+  }
+  return (
+    slug === 'quiz-family'
+    || slug === 'quiz'
+    || slug.startsWith('quiz-questions')
+    || slug === 'final-exam'
+    || slug === 'review-quiz'
   )
 }
 
@@ -115,6 +247,36 @@ export function getSchemaType(schema: JsonSchemaProperty | undefined): string | 
   return typeof schema.type === 'string' ? schema.type : null
 }
 
+function dereferenceSchemaProperty(
+  prop: JsonSchemaProperty | undefined,
+  rootWithDefs: JsonSchemaProperty,
+): JsonSchemaProperty | undefined {
+  if (!prop) {
+    return undefined
+  }
+  const ref = prop.$ref
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) {
+    return prop
+  }
+  const pointer = ref.slice(1).split('/').filter(Boolean)
+  let cur: unknown = rootWithDefs
+  for (const key of pointer) {
+    if (!cur || typeof cur !== 'object') {
+      return undefined
+    }
+    cur = (cur as Record<string, unknown>)[key]
+  }
+  return cur as JsonSchemaProperty | undefined
+}
+
+function schemaLooksLikeArray(s: JsonSchemaProperty | undefined): boolean {
+  return Boolean(s && (getSchemaType(s) === 'array' || s.items))
+}
+
+function schemaLooksLikeObject(s: JsonSchemaProperty | undefined): boolean {
+  return Boolean(s && (getSchemaType(s) === 'object' || s.properties))
+}
+
 export function collectSchemaFields(
   out: FormField[],
   schema: JsonSchemaProperty | undefined,
@@ -129,18 +291,45 @@ export function collectSchemaFields(
 
   const required = Array.isArray(schema.required) ? schema.required : parentRequired
 
-  Object.entries(properties).forEach(([key, property]) => {
+  const keysInOrder = orderedObjectPropertyKeys(Object.keys(properties), properties, path)
+  for (const key of keysInOrder) {
+    const property = properties[key]
+    if (!property) {
+      continue
+    }
     const nextPath = [...path, key]
     const baseType = getSchemaType(property)
 
     if (baseType === 'object' && property.properties && nextPath.length <= 3) {
       collectSchemaFields(out, property, section, nextPath, Array.isArray(property.required) ? property.required : [])
-      return
+      continue
     }
 
     if (baseType === 'array') {
+      const itemsProp = property.items as JsonSchemaProperty | undefined
+      const itemType = itemsProp ? getSchemaType(itemsProp) : null
+      if (
+        itemType === 'string'
+        && itemsProp
+        && !schemaLooksLikeObject(itemsProp)
+        && !Array.isArray(itemsProp.enum)
+      ) {
+        out.push({
+          id: nextPath.join('.'),
+          label: property.title || humanizeKey(key),
+          description: property.description,
+          path: nextPath,
+          required: required.includes(key),
+          section,
+          schema: property,
+          multiline: true,
+          disabled: false,
+          customType: 'string-array-lines',
+        })
+        continue
+      }
       // Array-of-object lists are expanded separately from the live draft (see appendArrayObjectScalarFields).
-      return
+      continue
     }
 
     if (baseType === 'string' || baseType === 'number' || baseType === 'boolean' || Array.isArray(property.enum)) {
@@ -156,7 +345,7 @@ export function collectSchemaFields(
         disabled: MEDIA_REFERENCE_KEYS.has(key),
       })
     }
-  })
+  }
 }
 
 const DEFAULT_ARRAY_CAP = 24
@@ -170,6 +359,49 @@ function orderKeysWithPreferredHead(
   const head = preferred.filter((k) => k in itemProperties)
   const tail = keys.filter((k) => !preferredSet.has(k))
   return [...head, ...tail]
+}
+
+/**
+ * Order for scalar/object property keys in contract forms: headings first, then body copy, then everything else (schema order).
+ * Matches author expectation (e.g. decision-point heading before prompt, option label before supporting text).
+ */
+const CANONICAL_FORM_FIELD_KEY_ORDER: readonly string[] = [
+  'title',
+  'headline',
+  'eyebrow',
+  'label',
+  'name',
+  'body',
+  'description',
+  'prompt',
+  'schemes',
+  'summary',
+  'instructions',
+  'text',
+  'helperText',
+  'content',
+  'note',
+  'transcript',
+]
+
+/**
+ * When walking `payload` / `config` schema `properties`, skip `id` at the root only (values are generated; not author-editable).
+ */
+function shouldOmitIdPropertyKey(pathPrefix: string[], key: string): boolean {
+  return (
+    key === 'id'
+    && pathPrefix.length === 1
+    && (pathPrefix[0] === 'payload' || pathPrefix[0] === 'config')
+  )
+}
+
+function orderedObjectPropertyKeys(
+  keys: string[],
+  properties: Record<string, JsonSchemaProperty>,
+  pathPrefix: string[],
+): string[] {
+  const filtered = keys.filter((k) => !shouldOmitIdPropertyKey(pathPrefix, k))
+  return orderKeysWithPreferredHead(filtered, CANONICAL_FORM_FIELD_KEY_ORDER, properties)
 }
 
 /** Per-array-item field order and hidden keys (fraud schemes, solve-the-case suspects & question options). */
@@ -204,7 +436,18 @@ function orderedArrayItemPropertyKeys(
     return orderKeysWithPreferredHead(keys, ['label', 'description', 'isCorrect'], itemProperties)
   }
 
-  return keys
+  const isFraudTriangleDocuments = slug === 'fraud-triangle' && arrayKey === 'documents' && !parentArrayKey
+  if (isFraudTriangleDocuments) {
+    keys = keys.filter(k => k !== 'id' && k !== 'mimeType')
+    return orderKeysWithPreferredHead(
+      keys,
+      ['title', 'url', 'alt', 'pageCount', 'openLabel', 'pdfDisplayMode', 'pageTabs'],
+      itemProperties,
+    )
+  }
+
+  keys = keys.filter((k) => k !== 'id')
+  return orderKeysWithPreferredHead(keys, CANONICAL_FORM_FIELD_KEY_ORDER, itemProperties)
 }
 
 function panelTitleForArrayRow(
@@ -221,6 +464,9 @@ function panelTitleForArrayRow(
   }
   if (arrayKey === 'options') {
     return `Option ${index + 1}`
+  }
+  if (arrayKey === 'documents') {
+    return `Document ${index + 1}`
   }
   return `${groupTitle} ${index + 1}`
 }
@@ -248,6 +494,215 @@ export type BuildFormFieldsOptions = {
 }
 
 /**
+ * After the learner picks image vs video, expose external URL + alt (matches saved `payload.media.file` shape).
+ */
+function appendContentCardMediaExternalFileFields(
+  out: FormField[],
+  draft: Record<string, unknown>,
+  options: BuildFormFieldsOptions,
+): void {
+  const slug = options.componentSlug || ''
+  if (slug !== 'content-card' && slug !== 'intro-card') {
+    return
+  }
+  const kind = getValueAtPath(draft, ['payload', 'media', 'kind'])
+  if (kind !== 'image' && kind !== 'video') {
+    return
+  }
+  if (out.some(f => f.id === 'payload.media.file.url')) {
+    return
+  }
+
+  const urlField: FormField = {
+    id: 'payload.media.file.url',
+    label: 'Media URL',
+    description: 'External image or video URL for this card.',
+    path: ['payload', 'media', 'file', 'url'],
+    required: false,
+    section: 'payload',
+    schema: { type: 'string', title: 'Media URL' },
+    multiline: false,
+    disabled: false,
+    customType: 'media-url',
+    mediaUrlMode: kind === 'video' ? 'any' : 'image',
+  }
+  const altField: FormField = {
+    id: 'payload.media.file.alt',
+    label: 'Alt text',
+    description: 'Describe the media for accessibility.',
+    path: ['payload', 'media', 'file', 'alt'],
+    required: false,
+    section: 'payload',
+    schema: { type: 'string', title: 'Alt text' },
+    multiline: false,
+    disabled: false,
+  }
+
+  const kindIdx = out.findIndex(f => f.id === 'payload.media.kind')
+  if (kindIdx >= 0) {
+    out.splice(kindIdx + 1, 0, urlField, altField)
+  } else {
+    out.push(urlField, altField)
+  }
+}
+
+/** Preferred Content Card / intro-card payload field order (API may serve schema keys alphabetically). */
+const INTRO_CONTENT_CARD_PAYLOAD_FIELD_ORDER: readonly string[] = [
+  'payload.title',
+  'payload.body',
+  'payload.buttonLabel',
+  'payload.media.kind',
+  'payload.media.file.url',
+  'payload.media.file.alt',
+]
+
+function reorderIntroContentCardPayloadStandaloneFields(
+  out: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  const slug = options.componentSlug || ''
+  if (slug !== 'content-card' && slug !== 'intro-card') {
+    return
+  }
+
+  const payloadStandalone: FormField[] = []
+  const payloadPanel: FormField[] = []
+  const rest: FormField[] = []
+
+  for (const f of out) {
+    if (f.section === 'payload' && !f.itemPanel) {
+      payloadStandalone.push(f)
+    } else if (f.section === 'payload' && f.itemPanel) {
+      payloadPanel.push(f)
+    } else {
+      rest.push(f)
+    }
+  }
+
+  const rank = (id: string): number => {
+    const i = INTRO_CONTENT_CARD_PAYLOAD_FIELD_ORDER.indexOf(id)
+    return i === -1 ? INTRO_CONTENT_CARD_PAYLOAD_FIELD_ORDER.length + 1 : i
+  }
+
+  payloadStandalone.sort(
+    (a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id),
+  )
+
+  out.length = 0
+  out.push(...payloadStandalone, ...payloadPanel, ...rest)
+}
+
+/** Title before body copy; `description` is labeled “Body” in the contract. */
+const FRAUD_TRIANGLE_PAYLOAD_FIELD_ORDER: readonly string[] = [
+  'payload.title',
+  'payload.description',
+]
+
+/**
+ * Legacy payload keys normalized into `documents[]` at runtime; hide duplicate editors in the builder.
+ * Keeps `payload.title`, `payload.description`, `payload.documents`, `payload.pillars`, and `config`.
+ */
+const FRAUD_TRIANGLE_LEGACY_PAYLOAD_ROOT_KEYS = new Set([
+  'scenario',
+  'text',
+  'body',
+  'document',
+  'pdf',
+  'tabPdf',
+  'images',
+  'pdfs',
+])
+
+function omitLegacyFraudTrianglePayloadFormFields(
+  fields: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isFraudTriangleSlug(options.componentSlug)) {
+    return
+  }
+  const next = fields.filter((f) => {
+    if (f.section !== 'payload') {
+      return true
+    }
+    const p = f.path
+    if (p.length < 2 || p[0] !== 'payload') {
+      return true
+    }
+    const rootKey = p[1]!
+    if (p.length === 2 && FRAUD_TRIANGLE_LEGACY_PAYLOAD_ROOT_KEYS.has(rootKey)) {
+      return false
+    }
+    if (p.length >= 3 && FRAUD_TRIANGLE_LEGACY_PAYLOAD_ROOT_KEYS.has(rootKey)) {
+      return false
+    }
+    return true
+  })
+  fields.length = 0
+  fields.push(...next)
+}
+
+function reorderFraudTrianglePayloadStandaloneFields(
+  out: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isFraudTriangleSlug(options.componentSlug)) {
+    return
+  }
+
+  const payloadStandalone: FormField[] = []
+  const payloadPanel: FormField[] = []
+  const rest: FormField[] = []
+
+  for (const f of out) {
+    if (f.section === 'payload' && !f.itemPanel) {
+      payloadStandalone.push(f)
+    } else if (f.section === 'payload' && f.itemPanel) {
+      payloadPanel.push(f)
+    } else {
+      rest.push(f)
+    }
+  }
+
+  const rank = (id: string): number => {
+    const i = FRAUD_TRIANGLE_PAYLOAD_FIELD_ORDER.indexOf(id)
+    return i === -1 ? FRAUD_TRIANGLE_PAYLOAD_FIELD_ORDER.length + 1 : i
+  }
+
+  payloadStandalone.sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id))
+
+  out.length = 0
+  out.push(...payloadStandalone, ...payloadPanel, ...rest)
+}
+
+function reorderFraudSchemePayloadStandaloneFields(
+  out: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isFraudSchemeFamilySlug(options.componentSlug)) {
+    return
+  }
+
+  const payloadPromptIdx = out.findIndex(f => f.id === 'payload.prompt')
+  const payloadSchemesPattern = /^payload\.schemes\.\d+/
+  const schemesFieldIndices = out
+    .map((f, i) => (payloadSchemesPattern.test(f.id) ? i : -1))
+    .filter(i => i !== -1)
+
+  if (payloadPromptIdx === -1 || schemesFieldIndices.length === 0) {
+    return
+  }
+
+  // Extract schemes fields in reverse order to keep indices stable while splicing
+  const schemesFields: FormField[] = []
+  for (let i = schemesFieldIndices.length - 1; i >= 0; i--) {
+    schemesFields.unshift(out.splice(schemesFieldIndices[i]!, 1)[0]!)
+  }
+
+  const newPromptIdx = out.findIndex(f => f.id === 'payload.prompt')
+  out.splice(newPromptIdx + 1, 0, ...schemesFields)
+}
+
+/**
  * Emit scalar fields for one payload array-of-objects (and recurse into nested array-of-objects, e.g. solve-the-case question options).
  */
 function emitPayloadArrayObjectFields(
@@ -259,15 +714,33 @@ function emitPayloadArrayObjectFields(
   section: FormSection,
   options: BuildFormFieldsOptions,
   payloadTopRequired: string[],
-  parentArrayKey?: string,
+  parentArrayKey: string | undefined,
+  rootPayloadSchema: JsonSchemaProperty | undefined,
 ): void {
-  const items = arrayProperty.items
-  if (!items || getSchemaType(items) !== 'object' || !items.properties) {
+  const root = rootPayloadSchema || {}
+  const itemsResolved = dereferenceSchemaProperty(
+    arrayProperty.items as JsonSchemaProperty,
+    root,
+  )
+  if (!itemsResolved || !schemaLooksLikeObject(itemsResolved) || !itemsResolved.properties) {
     return
   }
 
-  const itemProps = items.properties
-  const itemRequired = Array.isArray(items.required) ? items.required : []
+  if (
+    isQuizFamilySlug(options.componentSlug)
+    && arrayKey === 'options'
+    && parentArrayKey === 'questions'
+    && arrayPath.length >= 4
+  ) {
+    const qIdx = arrayPath[arrayPath.length - 2]!
+    const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+    if (kind === 'text') {
+      return
+    }
+  }
+
+  const itemProps = itemsResolved.properties
+  const itemRequired = Array.isArray(itemsResolved.required) ? itemsResolved.required : []
   const raw = getValueAtPath(draft, arrayPath)
   const arr = Array.isArray(raw) ? raw : []
 
@@ -296,8 +769,14 @@ function emitPayloadArrayObjectFields(
     const panelTitle = panelTitleForArrayRow(arrayKey, i, groupTitle, parentArrayKey)
 
     for (const itemKey of itemPropKeyOrder) {
-      const itemProp = itemProps[itemKey]
+      const rawItemProp = itemProps[itemKey]
+      const itemProp = dereferenceSchemaProperty(rawItemProp, root)
       if (!itemProp) {
+        continue
+      }
+
+      /** Builder: ids are auto-generated; do not show an editor field. */
+      if (itemKey === 'id') {
         continue
       }
 
@@ -312,9 +791,9 @@ function emitPayloadArrayObjectFields(
 
       const itemType = getSchemaType(itemProp)
 
-      if (itemType === 'array' && itemProp.items) {
-        const nestedItems = itemProp.items
-        if (getSchemaType(nestedItems) === 'object' && nestedItems.properties) {
+      if (schemaLooksLikeArray(itemProp) && itemProp.items) {
+        const nestedItems = dereferenceSchemaProperty(itemProp.items as JsonSchemaProperty, root)
+        if (nestedItems && schemaLooksLikeObject(nestedItems) && nestedItems.properties) {
           emitPayloadArrayObjectFields(
             out,
             draft,
@@ -325,6 +804,7 @@ function emitPayloadArrayObjectFields(
             options,
             payloadTopRequired,
             arrayKey,
+            rootPayloadSchema,
           )
         }
         continue
@@ -343,6 +823,18 @@ function emitPayloadArrayObjectFields(
       const fieldLabel = itemProp.title || humanizeKey(itemKey)
 
       const slug = options.componentSlug || ''
+      let quizQuestionKind: string | undefined
+      if (
+        isQuizFamilySlug(slug)
+        && arrayKey === 'options'
+        && parentArrayKey === 'questions'
+        && arrayPath.length >= 4
+      ) {
+        const qIdx = arrayPath[arrayPath.length - 2]!
+        const k = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+        quizQuestionKind = typeof k === 'string' ? k : undefined
+      }
+
       const useSchemeCorrectRadio =
         itemKey === 'isCorrect'
         && itemType === 'boolean'
@@ -350,9 +842,31 @@ function emitPayloadArrayObjectFields(
           ((slug === 'fraud-scheme-family' || slug === 'fraud-scheme') && arrayKey === 'schemes' && !parentArrayKey)
           || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'suspects' && !parentArrayKey)
           || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'supportingQuestions')
+          || (isQuizFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'questions' && quizQuestionKind === 'single_select')
         )
 
       const fieldRequired = itemRequired.includes(itemKey)
+
+      const isInvestigationEvidenceUrl
+        = isInvestigationActivitySlug(slug)
+          && arrayKey === 'files'
+          && itemKey === 'url'
+          && itemType === 'string'
+      const isInvestigationSuspectPhotoUrl
+        = isInvestigationActivitySlug(slug)
+          && arrayKey === 'suspects'
+          && itemKey === 'photoUrl'
+          && itemType === 'string'
+      const isFraudTriangleDocumentUrl
+        = isFraudTriangleSlug(slug)
+          && arrayKey === 'documents'
+          && itemKey === 'url'
+          && itemType === 'string'
+      const isFraudTriangleDocumentPageCountReadOnly
+        = isFraudTriangleSlug(slug)
+          && arrayKey === 'documents'
+          && itemKey === 'pageCount'
+          && itemType === 'number'
 
       out.push({
         id: nextPath.join('.'),
@@ -363,9 +877,19 @@ function emitPayloadArrayObjectFields(
         section,
         schema: itemProp,
         multiline: itemType === 'string' && MULTILINE_FIELD_PATTERN.test(itemKey),
-        disabled: MEDIA_REFERENCE_KEYS.has(itemKey),
+        disabled: MEDIA_REFERENCE_KEYS.has(itemKey) && !isInvestigationEvidenceUrl && !isFraudTriangleDocumentUrl,
+        ...(isFraudTriangleDocumentPageCountReadOnly ? { readOnly: true as const } : {}),
         itemPanel: { id: panelId, title: panelTitle, order: i },
         ...(useSchemeCorrectRadio ? { customType: 'scheme-correct-radio' as const } : {}),
+        ...(isInvestigationEvidenceUrl
+          ? { customType: 'media-url' as const, mediaUrlMode: 'any' as const }
+          : {}),
+        ...(isInvestigationSuspectPhotoUrl
+          ? { customType: 'media-url' as const, mediaUrlMode: 'image' as const }
+          : {}),
+        ...(isFraudTriangleDocumentUrl
+          ? { customType: 'media-url' as const, mediaUrlMode: 'any' as const }
+          : {}),
       })
     }
   }
@@ -383,23 +907,36 @@ function appendArrayObjectScalarFields(
   options: BuildFormFieldsOptions,
 ) {
   const properties = schema?.properties
-  if (!properties || typeof properties !== 'object') {
+  if (!properties || typeof properties !== 'object' || !schema) {
     return
   }
 
   const topRequired = Array.isArray(schema.required) ? schema.required : []
+  const rootPayloadSchema = schema
 
   for (const [key, property] of Object.entries(properties)) {
-    if (getSchemaType(property) !== 'array' || !property.items) {
+    const prop = dereferenceSchemaProperty(property, rootPayloadSchema)
+    if (!schemaLooksLikeArray(prop) || !prop.items) {
       continue
     }
 
-    const items = property.items
-    if (getSchemaType(items) !== 'object' || !items.properties) {
+    const items = dereferenceSchemaProperty(prop.items as JsonSchemaProperty, rootPayloadSchema)
+    if (!items || !schemaLooksLikeObject(items) || !items.properties) {
       continue
     }
 
-    emitPayloadArrayObjectFields(out, draft, key, property, [...basePath, key], section, options, topRequired, undefined)
+    emitPayloadArrayObjectFields(
+      out,
+      draft,
+      key,
+      prop,
+      [...basePath, key],
+      section,
+      options,
+      topRequired,
+      undefined,
+      rootPayloadSchema,
+    )
   }
 }
 
@@ -418,7 +955,12 @@ export function buildFormFieldsFromCompiledContract(
   collectSchemaFields(fields, contract.config?.schema, 'config', ['config'])
 
   const normalizedDraft = draft ? normalizePropsDraft(draft) : normalizePropsDraft({})
+  appendContentCardMediaExternalFileFields(fields, normalizedDraft, options)
   appendArrayObjectScalarFields(fields, normalizedDraft, contract.payload?.schema, 'payload', ['payload'], options)
+  reorderIntroContentCardPayloadStandaloneFields(fields, options)
+  reorderFraudTrianglePayloadStandaloneFields(fields, options)
+  reorderFraudSchemePayloadStandaloneFields(fields, options)
+  omitLegacyFraudTrianglePayloadFormFields(fields, options)
 
   return fields
 }
@@ -444,6 +986,7 @@ export type PayloadArrayDescriptor = {
  */
 export function listPayloadArrayDescriptors(
   compiledContract: Record<string, unknown> | null | undefined,
+  options?: BuildFormFieldsOptions,
 ): PayloadArrayDescriptor[] {
   if (!compiledContract || typeof compiledContract !== 'object') {
     return []
@@ -458,23 +1001,31 @@ export function listPayloadArrayDescriptors(
 
   const topRequired = Array.isArray(schema.required) ? schema.required : []
   const out: PayloadArrayDescriptor[] = []
+  const skipFraudLegacyArrays
+    = isFraudTriangleSlug(options?.componentSlug)
+      ? new Set(['images', 'pdfs'])
+      : null
 
   for (const [key, property] of Object.entries(properties)) {
-    if (getSchemaType(property) !== 'array' || !property.items) {
+    if (skipFraudLegacyArrays?.has(key)) {
       continue
     }
-    const items = property.items
-    if (getSchemaType(items) !== 'object' || !items.properties) {
+    const prop = dereferenceSchemaProperty(property, schema)
+    if (!schemaLooksLikeArray(prop) || !prop.items) {
+      continue
+    }
+    const items = dereferenceSchemaProperty(prop.items as JsonSchemaProperty, schema)
+    if (!items || !schemaLooksLikeObject(items) || !items.properties) {
       continue
     }
 
-    const minItems = typeof property.minItems === 'number'
-      ? property.minItems
+    const minItems = typeof prop.minItems === 'number'
+      ? prop.minItems
       : (topRequired.includes(key) ? 1 : 0)
 
     out.push({
       arrayPath: ['payload', key],
-      label: property.title || humanizeKey(key),
+      label: prop.title || humanizeKey(key),
       minItems,
       itemTemplate: itemTemplateFromProperties(items.properties),
     })
@@ -483,61 +1034,75 @@ export function listPayloadArrayDescriptors(
   return out
 }
 
-function fillMissingSequentialRowIds(
-  rows: unknown,
-  idPattern: RegExp,
-  prefix: string,
+/** Last non-numeric segment of a draft path, e.g. `['payload','questions','0','options']` → `options`. */
+export function arrayFieldKeyFromArrayPath(arrayPath: string[]): string {
+  for (let i = arrayPath.length - 1; i >= 0; i--) {
+    const seg = arrayPath[i]!
+    if (seg && !/^\d+$/.test(seg)) {
+      return seg
+    }
+  }
+  return 'row'
+}
+
+/**
+ * When a row object includes an `id` property (per contract), fill it with `{arrayKey}-{timestamp}-{random}`
+ * if it is missing or blank. Does not add an `id` key if the schema row has no `id` field.
+ */
+export function assignTimestampIdToPayloadRowIfApplicable(
+  row: Record<string, unknown>,
+  arrayFieldKey: string,
 ): void {
+  if (!Object.prototype.hasOwnProperty.call(row, 'id')) {
+    return
+  }
+  const id = row.id
+  if (typeof id === 'string' && id.trim() !== '') {
+    return
+  }
+  row.id = `${arrayFieldKey}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+/** Fraud scheme rows: hidden `id` in the form. */
+function ensureFraudSchemesHaveIds(draft: Record<string, unknown>): void {
+  const rows = getValueAtPath(draft, ['payload', 'schemes'])
   if (!Array.isArray(rows)) {
     return
   }
-  let maxNum = 0
   for (const row of rows) {
-    if (!row || typeof row !== 'object') {
-      continue
-    }
-    const id = (row as Record<string, unknown>).id
-    if (typeof id === 'string') {
-      const m = idPattern.exec(id.trim())
-      const n = m?.[1]
-      if (n !== undefined) {
-        maxNum = Math.max(maxNum, Number.parseInt(n, 10))
-      }
+    if (row && typeof row === 'object') {
+      assignTimestampIdToPayloadRowIfApplicable(row as Record<string, unknown>, 'schemes')
     }
   }
-  for (const row of rows) {
-    if (!row || typeof row !== 'object') {
-      continue
-    }
-    const r = row as Record<string, unknown>
-    const id = r.id
-    if (typeof id === 'string' && id.trim() !== '') {
-      continue
-    }
-    maxNum += 1
-    r.id = `${prefix}${maxNum}`
-  }
-}
-
-/** Fraud scheme rows: hidden `id` in the form; keep stable `scheme-*` ids. */
-function ensureFraudSchemesHaveIds(draft: Record<string, unknown>): void {
-  fillMissingSequentialRowIds(getValueAtPath(draft, ['payload', 'schemes']), /^scheme-(\d+)$/, 'scheme-')
 }
 
 /** Solve-the-case: suspects, supporting questions, and per-question options. */
 function ensureSolveTheCaseFamilyIds(draft: Record<string, unknown>): void {
-  fillMissingSequentialRowIds(getValueAtPath(draft, ['payload', 'suspects']), /^suspect-(\d+)$/, 'suspect-')
+  const suspects = getValueAtPath(draft, ['payload', 'suspects'])
+  if (Array.isArray(suspects)) {
+    for (const row of suspects) {
+      if (row && typeof row === 'object') {
+        assignTimestampIdToPayloadRowIfApplicable(row as Record<string, unknown>, 'suspects')
+      }
+    }
+  }
   const questions = getValueAtPath(draft, ['payload', 'supportingQuestions'])
   if (!Array.isArray(questions)) {
     return
   }
-  fillMissingSequentialRowIds(questions, /^question-(\d+)$/, 'question-')
   for (const q of questions) {
-    if (!q || typeof q !== 'object') {
-      continue
+    if (q && typeof q === 'object') {
+      assignTimestampIdToPayloadRowIfApplicable(q as Record<string, unknown>, 'supportingQuestions')
     }
     const opts = (q as Record<string, unknown>).options
-    fillMissingSequentialRowIds(opts, /^option-(\d+)$/, 'option-')
+    if (!Array.isArray(opts)) {
+      continue
+    }
+    for (const o of opts) {
+      if (o && typeof o === 'object') {
+        assignTimestampIdToPayloadRowIfApplicable(o as Record<string, unknown>, 'options')
+      }
+    }
   }
 }
 
@@ -549,8 +1114,10 @@ export function appendPayloadArrayItem(
   const next = normalizePropsDraft(draft)
   const raw = getValueAtPath(next, arrayPath)
   const arr = Array.isArray(raw) ? [...raw] : []
-  arr.push({ ...itemTemplate })
+  const row: Record<string, unknown> = { ...itemTemplate }
+  arr.push(row)
   setValueAtPath(next, arrayPath, arr)
+  assignTimestampIdToPayloadRowIfApplicable(row, arrayFieldKeyFromArrayPath(arrayPath))
   if (arrayPath[0] === 'payload') {
     ensureFraudSchemesHaveIds(next)
     ensureSolveTheCaseFamilyIds(next)
@@ -574,15 +1141,199 @@ export function removePayloadArrayItemAt(
   return next
 }
 
+/** Replace payload array contents with a reordered shallow copy (same object references). */
+export function reorderPayloadArrayItemsAtPath(
+  draft: Record<string, unknown>,
+  arrayPath: string[],
+  newItems: unknown[],
+): Record<string, unknown> {
+  const next = normalizePropsDraft(draft)
+  setValueAtPath(next, arrayPath, [...newItems])
+  return next
+}
+
+type ArrayFieldSchemaDescribe = {
+  arrayPropertySchema: JsonSchemaProperty
+  fieldKey: string
+  parentObjectRequired: string[]
+  parentArrayPropertyKey?: string
+}
+
+/**
+ * `draftArrayPath` points at an array value in the draft, e.g. `['payload','questions','0','options']`.
+ * Returns schema for that array property (must be array of objects).
+ */
+function describePayloadArrayFieldSchema(
+  rootPayloadSchema: JsonSchemaProperty | undefined,
+  draftArrayPath: string[],
+): ArrayFieldSchemaDescribe | null {
+  if (!rootPayloadSchema || draftArrayPath[0] !== 'payload' || draftArrayPath.length < 2) {
+    return null
+  }
+  const pathWithinPayload = draftArrayPath.slice(1)
+  const fieldKey = pathWithinPayload[pathWithinPayload.length - 1]
+  if (!fieldKey || /^\d+$/.test(fieldKey)) {
+    return null
+  }
+
+  const segments = pathWithinPayload.slice(0, -1)
+  let objSchema: JsonSchemaProperty | undefined = rootPayloadSchema
+  let parentArrayPropertyKey: string | undefined
+  let i = 0
+  while (i < segments.length) {
+    const seg = segments[i]!
+    if (/^\d+$/.test(seg)) {
+      i++
+      continue
+    }
+    const rawProp = objSchema.properties?.[seg]
+    const prop = dereferenceSchemaProperty(rawProp, rootPayloadSchema)
+    if (!prop) {
+      return null
+    }
+    const nextSeg = segments[i + 1]
+    if (nextSeg !== undefined && /^\d+$/.test(nextSeg)) {
+      if (!schemaLooksLikeArray(prop) || !prop.items) {
+        return null
+      }
+      const items = dereferenceSchemaProperty(prop.items as JsonSchemaProperty, rootPayloadSchema)
+      if (!items || !schemaLooksLikeObject(items)) {
+        return null
+      }
+      parentArrayPropertyKey = seg
+      objSchema = items
+      i += 2
+    } else if (schemaLooksLikeObject(prop) && prop.properties) {
+      objSchema = prop
+      i++
+    } else {
+      return null
+    }
+  }
+
+  const rawArrayProp = objSchema.properties?.[fieldKey]
+  const arrayProp = dereferenceSchemaProperty(rawArrayProp, rootPayloadSchema)
+  if (!arrayProp || !schemaLooksLikeArray(arrayProp) || !arrayProp.items) {
+    return null
+  }
+  const itemSch = dereferenceSchemaProperty(arrayProp.items as JsonSchemaProperty, rootPayloadSchema)
+  if (!itemSch || !schemaLooksLikeObject(itemSch) || !itemSch.properties) {
+    return null
+  }
+
+  const parentObjectRequired = Array.isArray(objSchema.required) ? objSchema.required : []
+  return {
+    arrayPropertySchema: arrayProp,
+    fieldKey,
+    parentObjectRequired,
+    parentArrayPropertyKey,
+  }
+}
+
+function minItemsForDescribedPayloadArray(
+  described: ArrayFieldSchemaDescribe,
+  componentSlug: string | undefined,
+): number {
+  const { arrayPropertySchema, fieldKey, parentObjectRequired, parentArrayPropertyKey } = described
+  let minItems = typeof arrayPropertySchema.minItems === 'number'
+    ? arrayPropertySchema.minItems
+    : (parentObjectRequired.includes(fieldKey) ? 1 : 0)
+
+  if (
+    isSolveTheCaseFamilySlug(componentSlug || '')
+    && fieldKey === 'options'
+    && parentArrayPropertyKey === 'supportingQuestions'
+    && minItems < 1
+  ) {
+    minItems = 1
+  }
+
+  return minItems
+}
+
+export type PayloadArrayRemovalTarget = {
+  arrayPath: string[]
+  index: number
+  minItems: number
+}
+
+export type ResolvePayloadArrayRowRemovalOptions = {
+  componentSlug?: string
+}
+
+/**
+ * Item panel ids are `path.to.array.N` (see `emitPayloadArrayObjectFields`). Resolves the draft
+ * array path, row index, and `minItems` from the compiled payload schema (including nested arrays
+ * like quiz `questions[].options` and solve-the-case `supportingQuestions[].options`).
+ */
+export function resolvePayloadArrayRowRemoval(
+  itemPanelId: string,
+  compiledContract: Record<string, unknown> | null | undefined,
+  options?: ResolvePayloadArrayRowRemovalOptions,
+): PayloadArrayRemovalTarget | null {
+  const parts = itemPanelId.split('.')
+  if (parts.length < 3) {
+    return null
+  }
+  const last = parts[parts.length - 1]
+  if (!last || !/^\d+$/.test(last)) {
+    return null
+  }
+  const index = Number.parseInt(last, 10)
+  const arrayPath = parts.slice(0, -1)
+  if (arrayPath[0] !== 'payload') {
+    return null
+  }
+
+  const contract = compiledContract as { payload?: { schema?: JsonSchemaProperty } } | null | undefined
+  const payloadSchema = contract?.payload?.schema
+  const described = describePayloadArrayFieldSchema(payloadSchema, arrayPath)
+  if (!described) {
+    return null
+  }
+
+  const minItems = minItemsForDescribedPayloadArray(described, options?.componentSlug)
+  return { arrayPath, index, minItems }
+}
+
+export function getPayloadArrayDescriptorAtPath(
+  compiledContract: Record<string, unknown> | null | undefined,
+  arrayPath: string[],
+  options?: { componentSlug?: string },
+): PayloadArrayDescriptor | null {
+  const contract = compiledContract as { payload?: { schema?: JsonSchemaProperty } } | null | undefined
+  const root = contract?.payload?.schema
+  const described = describePayloadArrayFieldSchema(root, arrayPath)
+  if (!described) {
+    return null
+  }
+  const itemsResolved = dereferenceSchemaProperty(
+    described.arrayPropertySchema.items as JsonSchemaProperty,
+    root || {},
+  )
+  if (!itemsResolved?.properties) {
+    return null
+  }
+  const minItems = minItemsForDescribedPayloadArray(described, options?.componentSlug)
+  const label = described.arrayPropertySchema.title || humanizeKey(described.fieldKey)
+  return {
+    arrayPath,
+    label,
+    minItems,
+    itemTemplate: itemTemplateFromProperties(itemsResolved.properties),
+  }
+}
+
 /**
  * Ensure array-of-object payload keys meet contract min length (e.g. decision-point options minItems: 2).
  */
 export function padPayloadArraysFromContract(
   draft: Record<string, unknown>,
   compiledContract: Record<string, unknown> | null | undefined,
+  options?: BuildFormFieldsOptions,
 ): Record<string, unknown> {
   const next = normalizePropsDraft(draft)
-  const descriptors = listPayloadArrayDescriptors(compiledContract)
+  const descriptors = listPayloadArrayDescriptors(compiledContract, options)
   for (const { arrayPath, minItems, itemTemplate } of descriptors) {
     if (minItems <= 0) {
       continue
@@ -593,6 +1344,12 @@ export function padPayloadArraysFromContract(
       arr.push({ ...itemTemplate })
     }
     setValueAtPath(next, arrayPath, arr)
+    const fieldKey = arrayFieldKeyFromArrayPath(arrayPath)
+    for (const row of arr) {
+      if (row && typeof row === 'object' && !Array.isArray(row)) {
+        assignTimestampIdToPayloadRowIfApplicable(row as Record<string, unknown>, fieldKey)
+      }
+    }
   }
   ensureFraudSchemesHaveIds(next)
   ensureSolveTheCaseFamilyIds(next)
@@ -601,6 +1358,163 @@ export function padPayloadArraysFromContract(
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function walkNestedPayloadArrayDescriptors(
+  obj: Record<string, unknown>,
+  objSchema: JsonSchemaProperty,
+  pathPrefix: string[],
+  rootPayloadSchema: JsonSchemaProperty,
+  compiledContract: Record<string, unknown>,
+  componentSlug: string | undefined,
+  seen: Set<string>,
+  out: PayloadArrayDescriptor[],
+): void {
+  const props = objSchema.properties
+  if (!props) {
+    return
+  }
+  for (const key of Object.keys(props)) {
+    const rawProp = props[key]
+    const propSchema = dereferenceSchemaProperty(rawProp, rootPayloadSchema)
+    if (!propSchema) {
+      continue
+    }
+    const val = Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : undefined
+
+    if (
+      key === 'options'
+      && isQuizFamilySlug(componentSlug)
+      && pathPrefix.length >= 2
+      && pathPrefix[pathPrefix.length - 2] === 'questions'
+      && isRecord(obj)
+      && obj.kind === 'text'
+    ) {
+      continue
+    }
+
+    if (schemaLooksLikeArray(propSchema)) {
+      const quizQuestionNonTextOptions =
+        key === 'options'
+        && isQuizFamilySlug(componentSlug)
+        && pathPrefix.length >= 2
+        && pathPrefix[pathPrefix.length - 2] === 'questions'
+        && isRecord(obj)
+        && obj.kind !== 'text'
+
+      let listVal: unknown[] | null = null
+      if (Array.isArray(val)) {
+        listVal = val
+      } else if (quizQuestionNonTextOptions && (val === undefined || val === null)) {
+        listVal = []
+      }
+
+      if (listVal === null) {
+        continue
+      }
+
+      const items = dereferenceSchemaProperty(propSchema.items as JsonSchemaProperty, rootPayloadSchema)
+      if (items && schemaLooksLikeObject(items) && items.properties) {
+        const arrayPath = [...pathPrefix, key]
+        const sig = arrayPath.join('.')
+        if (!seen.has(sig)) {
+          seen.add(sig)
+          const desc = getPayloadArrayDescriptorAtPath(compiledContract, arrayPath, { componentSlug })
+          if (desc) {
+            out.push(desc)
+          }
+        }
+        for (let i = 0; i < listVal.length; i++) {
+          const el = listVal[i]
+          if (isRecord(el)) {
+            walkNestedPayloadArrayDescriptors(
+              el,
+              items,
+              [...pathPrefix, key, String(i)],
+              rootPayloadSchema,
+              compiledContract,
+              componentSlug,
+              seen,
+              out,
+            )
+          }
+        }
+      }
+    } else if (isRecord(val) && schemaLooksLikeObject(propSchema) && propSchema.properties) {
+      walkNestedPayloadArrayDescriptors(
+        val,
+        propSchema,
+        [...pathPrefix, key],
+        rootPayloadSchema,
+        compiledContract,
+        componentSlug,
+        seen,
+        out,
+      )
+    }
+  }
+}
+
+/**
+ * All payload object-array paths present in the draft (including nested), for add-row controls.
+ */
+export function collectNestedPayloadArrayDescriptors(
+  draft: Record<string, unknown>,
+  compiledContract: Record<string, unknown> | null | undefined,
+  options?: { componentSlug?: string },
+): PayloadArrayDescriptor[] {
+  if (!compiledContract || typeof compiledContract !== 'object') {
+    return []
+  }
+  const contract = compiledContract as { payload?: { schema?: JsonSchemaProperty } }
+  const root = contract.payload?.schema
+  if (!root) {
+    return []
+  }
+  const payload = getValueAtPath(draft, ['payload'])
+  if (!isRecord(payload)) {
+    return []
+  }
+  const seen = new Set<string>()
+  const out: PayloadArrayDescriptor[] = []
+  walkNestedPayloadArrayDescriptors(
+    payload,
+    root,
+    ['payload'],
+    root,
+    compiledContract as Record<string, unknown>,
+    options?.componentSlug,
+    seen,
+    out,
+  )
+  return out
+}
+
+/** `payload.schemes.2` → `payload.schemes` */
+export function payloadArrayListPathFromPanelId(panelId: string): string | null {
+  const parts = panelId.split('.')
+  if (parts.length < 3) {
+    return null
+  }
+  const last = parts[parts.length - 1]
+  if (!last || !/^\d+$/.test(last)) {
+    return null
+  }
+  return parts.slice(0, -1).join('.')
+}
+
+/** Longest other panel id that is a proper prefix of `panelId` (direct parent row panel). */
+export function parentPayloadPanelId(panelId: string, allPanelIds: Iterable<string>): string | null {
+  let best: string | null = null
+  for (const id of allPanelIds) {
+    if (id === panelId || !panelId.startsWith(`${id}.`)) {
+      continue
+    }
+    if (!best || id.length > best.length) {
+      best = id
+    }
+  }
+  return best
 }
 
 function isArrayIndexSegment(segment: string): boolean {
@@ -773,6 +1687,19 @@ export function applyFieldUpdateToDraft(
 ): Record<string, unknown> {
   const next = normalizePropsDraft(draft)
 
+  if (field.customType === 'string-array-lines') {
+    if (Array.isArray(value)) {
+      setValueAtPath(next, field.path, value.map(v => String(v).trim()))
+      return next
+    }
+    const raw = typeof value === 'string' ? value : String(value ?? '')
+    const lines = raw
+      .split(/\r?\n/)
+      .map(line => line.trim())
+    setValueAtPath(next, field.path, lines)
+    return next
+  }
+
   if (field.customType === 'scheme-correct-radio') {
     const path = field.path
     if (value && path.length >= 2 && path[path.length - 1] === 'isCorrect') {
@@ -803,5 +1730,34 @@ export function applyFieldUpdateToDraft(
     setValueAtPath(next, field.path, value)
   }
 
+  const p = field.path
+  if (
+    p.length >= 4
+    && p[0] === 'payload'
+    && p[1] === 'questions'
+    && /^\d+$/.test(String(p[2]))
+    && p[p.length - 1] === 'kind'
+    && value === 'text'
+  ) {
+    setValueAtPath(next, [...p.slice(0, -1), 'options'], [])
+  }
+
+  if (
+    p.length >= 4
+    && p[0] === 'payload'
+    && p[1] === 'questions'
+    && /^\d+$/.test(String(p[2]))
+    && p[p.length - 1] === 'kind'
+    && (value === 'single_select' || value === 'multi_select')
+  ) {
+    const optPath = [...p.slice(0, -1), 'options']
+    const cur = getValueAtPath(next, optPath)
+    if (!Array.isArray(cur)) {
+      setValueAtPath(next, optPath, [])
+    }
+  }
+
   return next
 }
+
+export { collectQuizChoiceValidationIssues } from '../../../rfm-components/activities/quiz-family/payload-choice-validation'

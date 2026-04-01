@@ -12,12 +12,18 @@ export function resolvePreviewAssetUrl(cdnBaseUrl: string, key: string): string 
   return `${trimmedBase}/${trimmedKey}`
 }
 
+function clonePreviewPropsRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(value ?? {})) as Record<string, unknown>
+}
+
 /**
  * Renders RFM component pods inside a sandboxed iframe (same pattern as DetailPage).
  */
 export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | null>) {
   const runtime = useComponentsRuntime()
   const runtimeError = ref('')
+  /** Bumps on each render request so a slow async render cannot overwrite a newer preview. */
+  let previewGeneration = 0
 
   async function ensureRuntimeLoaded(): Promise<void> {
     runtimeError.value = ''
@@ -84,8 +90,20 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
     props: Record<string, unknown>
     themeVariant?: string
   }): Promise<void> {
+    const gen = ++previewGeneration
+    const slug = String(args.slug || '')
+    const themeVariant = args.themeVariant
+    const props = clonePreviewPropsRecord(args.props)
+
     await ensureRuntimeLoaded()
+    if (gen !== previewGeneration) {
+      return
+    }
+
     await prepareIframe()
+    if (gen !== previewGeneration) {
+      return
+    }
 
     const iframeWin = iframeRef.value?.contentWindow as (Window & typeof globalThis) | null
     const iframeRuntime = iframeWin?.__RFM_COMPONENTS_VUE__
@@ -93,15 +111,20 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
       throw new Error('Runtime not available inside preview iframe.')
     }
 
+    if (gen !== previewGeneration) {
+      return
+    }
+
     iframeRuntime.renderPod({
-      slug: args.slug,
+      slug,
       mountSelector: RFM_PLAYGROUND_MOUNT_SELECTOR,
-      props: args.props,
-      themeVariant: args.themeVariant,
+      props,
+      themeVariant,
     })
   }
 
   function unmountPreview(): void {
+    previewGeneration += 1
     const iframeWin = iframeRef.value?.contentWindow as (Window & typeof globalThis) | null
     const iframeRuntime = iframeWin?.__RFM_COMPONENTS_VUE__
     if (iframeRuntime) {
