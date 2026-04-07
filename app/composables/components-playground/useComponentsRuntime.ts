@@ -2,7 +2,7 @@ import type {
   ComponentsResolutionPayload,
   ComponentsRuntime,
 } from '../../types/components-playground'
-import { useComponentsPlaygroundAdapter } from '../../composables/components-playground/useComponentsPlaygroundAdapter'
+import { useComponentsPlaygroundAdapter } from './useComponentsPlaygroundAdapter'
 
 export function useComponentsRuntime() {
   const adapter = useComponentsPlaygroundAdapter()
