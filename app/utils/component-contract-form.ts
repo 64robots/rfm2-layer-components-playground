@@ -1,5 +1,8 @@
 import type { ComponentsCatalogDetailPayload } from '../types/components-playground'
 
+/** Client-only stable identity for `payload.attachments[]` rows (vuedraggable keys; omitted from API). */
+export const PAYLOAD_ATTACHMENT_UI_ROW_KEY = '_uiRowKey'
+
 export type FormSection = 'payload' | 'config'
 
 export type JsonSchemaProperty = {
@@ -1254,6 +1257,7 @@ export function appendPayloadArrayItem(
     && arrayPath[0] === 'payload'
     && arrayPath[1] === 'attachments'
   ) {
+    row[PAYLOAD_ATTACHMENT_UI_ROW_KEY] = `att-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
     const file = row.file
     if (!file || typeof file !== 'object' || Array.isArray(file)) {
       row.file = { source: 'external', url: '', title: '' }
@@ -1803,6 +1807,47 @@ export function cloneDraftValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value ?? {})) as T
 }
 
+function ensurePayloadAttachmentUiRowKeys(payload: Record<string, unknown>): void {
+  const attachments = payload.attachments
+  if (!Array.isArray(attachments)) {
+    return
+  }
+  for (const row of attachments) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      continue
+    }
+    const r = row as Record<string, unknown>
+    const existing = r[PAYLOAD_ATTACHMENT_UI_ROW_KEY]
+    if (typeof existing === 'string' && existing.trim() !== '') {
+      continue
+    }
+    r[PAYLOAD_ATTACHMENT_UI_ROW_KEY] = `att-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+  }
+}
+
+/**
+ * Remove editor-only keys from `payload.attachments` before persisting to the API
+ * (schema uses `additionalProperties: false` on attachment items).
+ */
+export function stripPayloadAttachmentsEditorKeys(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const attachments = payload.attachments
+  if (!Array.isArray(attachments)) {
+    return payload
+  }
+  return {
+    ...payload,
+    attachments: attachments.map((row) => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        return row
+      }
+      const { [PAYLOAD_ATTACHMENT_UI_ROW_KEY]: _, ...rest } = row as Record<string, unknown>
+      return rest
+    }),
+  }
+}
+
 export function normalizePropsDraft(value: Record<string, unknown> | null | undefined): Record<string, unknown> {
   const next = cloneDraftValue(value || {})
   if (!isRecord(next.payload)) {
@@ -1814,6 +1859,7 @@ export function normalizePropsDraft(value: Record<string, unknown> | null | unde
   if (!isRecord(next.interactionState)) {
     next.interactionState = {}
   }
+  ensurePayloadAttachmentUiRowKeys(next.payload as Record<string, unknown>)
   return next
 }
 
