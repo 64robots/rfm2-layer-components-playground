@@ -39,9 +39,10 @@ export type FormField = {
   customType?: 'media-asset' | 'scheme-correct-radio' | 'media-url' | 'string-array-lines'
   /**
    * When `customType` is `media-url`, limits the media library and file picker.
-   * `any` = images, videos, documents; `image` = images only (e.g. suspect headshots).
+   * `any` = images, videos, documents; `image` = images only (e.g. suspect headshots);
+   * `video` = videos only (e.g. video activity main asset).
    */
-  mediaUrlMode?: 'any' | 'image'
+  mediaUrlMode?: 'any' | 'image' | 'video'
   /** When set, the field belongs to a grouped row (e.g. decision-point Option 1). */
   itemPanel?: FormFieldItemPanel
 }
@@ -192,6 +193,11 @@ export function isInvestigationActivitySlug(slug: string | undefined): boolean {
 /** Fraud triangle catalog slug (`payload.documents[]` + title / description). */
 export function isFraudTriangleSlug(slug: string | undefined): boolean {
   return slug === 'fraud-triangle'
+}
+
+/** Video activity (`payload.video`, `payload.poster`, `payload.attachments[].file`). */
+export function isVideoActivitySlug(slug: string | undefined): boolean {
+  return slug === 'video'
 }
 
 /** Synopsis catalog slug (`payload.intro` + `sections[]`). */
@@ -446,6 +452,11 @@ function orderedArrayItemPropertyKeys(
     )
   }
 
+  if (isVideoActivitySlug(slug) && arrayKey === 'attachments' && !parentArrayKey) {
+    keys = keys.filter((k) => k !== 'id')
+    return orderKeysWithPreferredHead(keys, ['label', 'file'], itemProperties)
+  }
+
   keys = keys.filter((k) => k !== 'id')
   return orderKeysWithPreferredHead(keys, CANONICAL_FORM_FIELD_KEY_ORDER, itemProperties)
 }
@@ -467,6 +478,9 @@ function panelTitleForArrayRow(
   }
   if (arrayKey === 'documents') {
     return `Document ${index + 1}`
+  }
+  if (arrayKey === 'attachments') {
+    return `Attachment ${index + 1}`
   }
   return `${groupTitle} ${index + 1}`
 }
@@ -543,6 +557,78 @@ function appendContentCardMediaExternalFileFields(
     out.splice(kindIdx + 1, 0, urlField, altField)
   } else {
     out.push(urlField, altField)
+  }
+}
+
+/**
+ * Video activity: `payload.video` / `payload.poster` are `oneOf` media assets in the contract JSON Schema,
+ * so they are skipped by `collectSchemaFields`. Emit explicit media-url + scalar fields for the lesson editor.
+ */
+function appendVideoActivityMediaFields(
+  out: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isVideoActivitySlug(options.componentSlug)) {
+    return
+  }
+  if (out.some(f => f.id === 'payload.video.url')) {
+    return
+  }
+
+  const videoUrl: FormField = {
+    id: 'payload.video.url',
+    label: 'Video',
+    description: 'Main video: library, upload, or external URL.',
+    path: ['payload', 'video', 'url'],
+    required: true,
+    section: 'payload',
+    schema: { type: 'string', title: 'Video URL' },
+    multiline: false,
+    disabled: false,
+    customType: 'media-url',
+    mediaUrlMode: 'video',
+  }
+  const videoTitle: FormField = {
+    id: 'payload.video.title',
+    label: 'Video title',
+    description: 'Optional display title for the video asset.',
+    path: ['payload', 'video', 'title'],
+    required: false,
+    section: 'payload',
+    schema: { type: 'string', title: 'Video title' },
+    multiline: false,
+    disabled: false,
+  }
+  const posterUrl: FormField = {
+    id: 'payload.poster.url',
+    label: 'Poster',
+    description: 'Optional image shown before playback (library, upload, or URL).',
+    path: ['payload', 'poster', 'url'],
+    required: false,
+    section: 'payload',
+    schema: { type: 'string', title: 'Poster URL' },
+    multiline: false,
+    disabled: false,
+    customType: 'media-url',
+    mediaUrlMode: 'image',
+  }
+  const posterAlt: FormField = {
+    id: 'payload.poster.alt',
+    label: 'Poster alt text',
+    description: 'Accessibility description for the poster image.',
+    path: ['payload', 'poster', 'alt'],
+    required: false,
+    section: 'payload',
+    schema: { type: 'string', title: 'Poster alt text' },
+    multiline: false,
+    disabled: false,
+  }
+
+  const descIdx = out.findIndex(f => f.id === 'payload.description')
+  if (descIdx >= 0) {
+    out.splice(descIdx + 1, 0, videoUrl, videoTitle, posterUrl, posterAlt)
+  } else {
+    out.push(videoUrl, videoTitle, posterUrl, posterAlt)
   }
 }
 
@@ -810,6 +896,46 @@ function emitPayloadArrayObjectFields(
         continue
       }
 
+      const isVideoAttachmentFile
+        = isVideoActivitySlug(options.componentSlug)
+          && arrayKey === 'attachments'
+          && !parentArrayKey
+          && itemKey === 'file'
+          && !itemType
+          && (Boolean(itemProp.oneOf) || Boolean(itemProp.$ref))
+
+      if (isVideoAttachmentFile) {
+        const fileUrlPath = [...arrayPath, String(i), 'file', 'url']
+        out.push({
+          id: fileUrlPath.join('.'),
+          label: 'File',
+          description: 'PDF or document: library, upload, or external URL.',
+          path: fileUrlPath,
+          required: itemRequired.includes('file'),
+          section,
+          schema: { type: 'string', title: 'File URL' },
+          multiline: false,
+          disabled: false,
+          customType: 'media-url',
+          mediaUrlMode: 'any',
+          itemPanel: { id: panelId, title: panelTitle, order: i },
+        })
+        const fileTitlePath = [...arrayPath, String(i), 'file', 'title']
+        out.push({
+          id: fileTitlePath.join('.'),
+          label: 'File title',
+          description: 'Optional; shown with the download link.',
+          path: fileTitlePath,
+          required: false,
+          section,
+          schema: { type: 'string', title: 'File title' },
+          multiline: false,
+          disabled: false,
+          itemPanel: { id: panelId, title: panelTitle, order: i },
+        })
+        continue
+      }
+
       if (
         itemType !== 'string'
         && itemType !== 'number'
@@ -956,6 +1082,7 @@ export function buildFormFieldsFromCompiledContract(
 
   const normalizedDraft = draft ? normalizePropsDraft(draft) : normalizePropsDraft({})
   appendContentCardMediaExternalFileFields(fields, normalizedDraft, options)
+  appendVideoActivityMediaFields(fields, options)
   appendArrayObjectScalarFields(fields, normalizedDraft, contract.payload?.schema, 'payload', ['payload'], options)
   reorderIntroContentCardPayloadStandaloneFields(fields, options)
   reorderFraudTrianglePayloadStandaloneFields(fields, options)
@@ -1121,6 +1248,16 @@ export function appendPayloadArrayItem(
   if (arrayPath[0] === 'payload') {
     ensureFraudSchemesHaveIds(next)
     ensureSolveTheCaseFamilyIds(next)
+  }
+  if (
+    arrayPath.length >= 2
+    && arrayPath[0] === 'payload'
+    && arrayPath[1] === 'attachments'
+  ) {
+    const file = row.file
+    if (!file || typeof file !== 'object' || Array.isArray(file)) {
+      row.file = { source: 'external', url: '', title: '' }
+    }
   }
   return next
 }
@@ -1353,7 +1490,62 @@ export function padPayloadArraysFromContract(
   }
   ensureFraudSchemesHaveIds(next)
   ensureSolveTheCaseFamilyIds(next)
+  seedVideoActivityPayloadDefaults(next, options?.componentSlug)
   return next
+}
+
+function seedVideoActivityPayloadDefaults(next: Record<string, unknown>, slug: string | undefined): void {
+  if (!isVideoActivitySlug(slug)) {
+    return
+  }
+  const payload = getValueAtPath(next, ['payload'])
+  if (!isRecord(payload)) {
+    return
+  }
+
+  if (!isRecord(payload.video)) {
+    payload.video = { source: 'external', url: '', title: '' }
+  } else {
+    const v = payload.video as Record<string, unknown>
+    if (v.source !== 'library' && v.source !== 'external') {
+      v.source = 'external'
+    }
+    if (typeof v.url !== 'string') {
+      v.url = ''
+    }
+  }
+
+  if (payload.poster !== undefined && payload.poster !== null) {
+    if (!isRecord(payload.poster)) {
+      payload.poster = { source: 'external', url: '', alt: '' }
+    } else {
+      const po = payload.poster as Record<string, unknown>
+      if (po.source !== 'library' && po.source !== 'external') {
+        po.source = 'external'
+      }
+    }
+  }
+
+  const attachments = payload.attachments
+  if (Array.isArray(attachments)) {
+    for (const row of attachments) {
+      if (!isRecord(row)) {
+        continue
+      }
+      const file = row.file
+      if (!isRecord(file)) {
+        row.file = { source: 'external', url: '', title: '' }
+      } else {
+        const f = file as Record<string, unknown>
+        if (f.source !== 'library' && f.source !== 'external') {
+          f.source = 'external'
+        }
+        if (typeof f.url !== 'string') {
+          f.url = ''
+        }
+      }
+    }
+  }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1759,5 +1951,3 @@ export function applyFieldUpdateToDraft(
 
   return next
 }
-
-export { collectQuizChoiceValidationIssues } from '../../../rfm-components/activities/quiz-family/payload-choice-validation'

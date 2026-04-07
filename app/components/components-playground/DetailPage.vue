@@ -125,16 +125,14 @@ const themeVariant = ref<'default' | 'rfm-classic'>('rfm-classic')
 const availableComponents = computed<ComponentsCatalogItem[]>(() => catalog.value?.components || [])
 const availableSlugs = computed<string[]>(() => availableComponents.value.map((item) => item.slug))
 
-const selectedSlug = computed({
-  get: () => slug.value,
-  set: async (value: string) => {
-    if (!value || value === slug.value) {
-      return
-    }
+function onCatalogSlugSelect(value: string | undefined) {
+  const next = typeof value === 'string' ? value.trim() : ''
+  if (!next || next === slug.value) {
+    return
+  }
 
-    await router.push(`/components/${value}`)
-  },
-})
+  void router.push(`/components/${next}`)
+}
 
 const viewportItems: Array<{ label: string, value: ViewportMode }> = [
   { label: 'Desktop', value: 'desktop' },
@@ -679,7 +677,12 @@ onBeforeUnmount(() => {
       <section class="flex w-[420px] shrink-0 flex-col border-l border-default bg-default">
         <div class="space-y-3 border-b border-default p-4">
           <UFormField label="Available Components">
-            <USelect v-model="selectedSlug" :items="availableSlugs" class="w-full" />
+            <USelect
+              :model-value="slug"
+              :items="availableSlugs"
+              class="w-full"
+              @update:model-value="onCatalogSlugSelect"
+            />
           </UFormField>
 
           <div v-if="detail" class="space-y-1 text-xs text-muted">
