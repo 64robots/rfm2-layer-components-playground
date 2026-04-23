@@ -18,6 +18,7 @@ export type JsonSchemaProperty = {
   $ref?: string
   oneOf?: JsonSchemaProperty[]
   const?: unknown
+  default?: unknown
   $defs?: Record<string, JsonSchemaProperty>
 }
 
@@ -39,7 +40,7 @@ export type FormField = {
   disabled: boolean
   /** Editable but not writable (e.g. derived page count); avoids “managed source” disabled styling. */
   readOnly?: boolean
-  customType?: 'media-asset' | 'scheme-correct-radio' | 'media-url' | 'string-array-lines'
+  customType?: 'media-asset' | 'scheme-correct-radio' | 'media-url' | 'string-array-lines' | 'investigation-linked-file-select'
   /**
    * When `customType` is `media-url`, limits the media library and file picker.
    * `any` = images, videos, documents; `image` = images only (e.g. suspect headshots);
@@ -191,6 +192,144 @@ export function isSolveTheCaseFamilySlug(slug: string | undefined): boolean {
 /** Investigation desktop + accessible variants share the same payload shape. */
 export function isInvestigationActivitySlug(slug: string | undefined): boolean {
   return slug === 'investigation' || slug === 'accessible-investigation'
+}
+
+/**
+ * Ensure every `payload.files[]` row in an investigation draft has a non-empty
+ * string `id`. Heals rows that predate the auto-id wiring (or were imported
+ * without ids) so dropdowns referring to `payload.files[].id` (e.g. questions'
+ * `linkedFileId`) have stable targets. Mutates `draft` in place and returns
+ * `true` if any row was modified.
+ */
+export function ensureInvestigationFileIds(draft: Record<string, unknown>): boolean {
+  const files = getValueAtPath(draft, ['payload', 'files'])
+  if (!Array.isArray(files)) {
+    return false
+  }
+  let mutated = false
+  for (const row of files) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      continue
+    }
+    const r = row as Record<string, unknown>
+    const current = typeof r.id === 'string' ? r.id.trim() : ''
+    if (current) {
+      continue
+    }
+    r.id = `files-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    mutated = true
+  }
+  return mutated
+}
+
+/**
+ * Auto-grid layout for investigation files without an explicit position.
+ * Mirrors `InvestigationDesktop.vue`'s `autoGridPosition` (3-column grid,
+ * ~70% width spread, 28% row height) so the seeded default places files in
+ * the same visual slot the renderer would pick at runtime.
+ */
+function investigationFileDefaultPosition(
+  index: number,
+  total: number,
+): { x: number, y: number, rotation: number } {
+  const cols = Math.max(1, Math.min(total || 1, 3))
+  const row = Math.floor(index / cols)
+  const col = index % cols
+  const cellWidth = 70 / cols
+  // Deterministic jitter so the "messy desk" look is stable across renders but
+  // varies per slot (index drives the rotation seed).
+  const rotationSeed = Math.sin(index * 12.9898) * 43758.5453
+  const rotation = Math.round(((rotationSeed - Math.floor(rotationSeed)) * 8 - 4) * 10) / 10
+  return {
+    x: Math.round((4 + col * cellWidth) * 10) / 10,
+    y: Math.round((4 + row * 28) * 10) / 10,
+    rotation,
+  }
+}
+
+/**
+ * Ensure every `payload.files[]` row has a `position` object
+ * (`{ x, y, rotation }`). Without this, new files render at the auto-grid
+ * default on every open but never get those coordinates persisted to the
+ * payload — which means author-level drags in the live preview (and manual
+ * edits) reset whenever the activity is reloaded. Seeds defaults that match
+ * the renderer's auto-grid so the visual layout doesn't shift when the
+ * position becomes explicit. Mutates in place, returns `true` if any row
+ * was modified.
+ */
+export function ensureInvestigationFilePositions(draft: Record<string, unknown>): boolean {
+  const files = getValueAtPath(draft, ['payload', 'files'])
+  if (!Array.isArray(files)) {
+    return false
+  }
+  let mutated = false
+  for (let i = 0; i < files.length; i++) {
+    const row = files[i]
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      continue
+    }
+    const r = row as Record<string, unknown>
+    const existing = r.position
+    if (isRecord(existing)) {
+      const ex = existing as Record<string, unknown>
+      // Fill any missing axis so partial position rows become renderable.
+      let touched = false
+      const defaults = investigationFileDefaultPosition(i, files.length)
+      if (typeof ex.x !== 'number' || !Number.isFinite(ex.x)) {
+        ex.x = defaults.x
+        touched = true
+      }
+      if (typeof ex.y !== 'number' || !Number.isFinite(ex.y)) {
+        ex.y = defaults.y
+        touched = true
+      }
+      if (typeof ex.rotation !== 'number' || !Number.isFinite(ex.rotation)) {
+        ex.rotation = defaults.rotation
+        touched = true
+      }
+      if (touched) {
+        mutated = true
+      }
+      continue
+    }
+    r.position = investigationFileDefaultPosition(i, files.length)
+    mutated = true
+  }
+  return mutated
+}
+
+/**
+ * Investigation question → file link options.
+ * Reads `payload.files[]` from the current draft and returns `{ value, label }`
+ * entries suitable for a `<USelect>` that populates `question.linkedFileId`.
+ * Older drafts without `id` values are kept off the list because we can't
+ * safely save a linked reference — `ensureInvestigationFileIds` (called on
+ * pad, append, and via a watcher in the activity editor) heals those rows so
+ * they appear as soon as the payload next cycles through. Missing titles fall
+ * back to a positional "File N" label so authors can still distinguish rows.
+ */
+export function investigationLinkedFileOptions(
+  draft: Record<string, unknown>,
+): { value: string, label: string }[] {
+  const files = getValueAtPath(draft, ['payload', 'files'])
+  if (!Array.isArray(files)) {
+    return []
+  }
+  const out: { value: string, label: string }[] = []
+  for (let i = 0; i < files.length; i++) {
+    const row = files[i]
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      continue
+    }
+    const r = row as Record<string, unknown>
+    const id = typeof r.id === 'string' ? r.id.trim() : ''
+    if (!id) {
+      continue
+    }
+    const title = typeof r.title === 'string' ? r.title.trim() : ''
+    out.push({ value: id, label: title || `File ${i + 1}` })
+  }
+  return out
 }
 
 /** Fraud triangle catalog slug (`payload.documents[]` + title / description). */
@@ -492,7 +631,17 @@ function itemTemplateFromProperties(properties: Record<string, JsonSchemaPropert
   const row: Record<string, unknown> = {}
   for (const [itemKey, prop] of Object.entries(properties)) {
     const t = getSchemaType(prop)
-    if (t === 'boolean') {
+    // Honor schema-level defaults first so contracts can opt into non-zero
+    // initial values (e.g. `viewableAtOnset: true` for investigation files).
+    if (t === 'boolean' && typeof prop.default === 'boolean') {
+      row[itemKey] = prop.default
+    } else if (t === 'number' && typeof prop.default === 'number') {
+      row[itemKey] = prop.default
+    } else if (t === 'array' && Array.isArray(prop.default)) {
+      row[itemKey] = [...prop.default]
+    } else if (t === 'string' && typeof prop.default === 'string') {
+      row[itemKey] = prop.default
+    } else if (t === 'boolean') {
       row[itemKey] = false
     } else if (t === 'number') {
       row[itemKey] = ''
@@ -986,6 +1135,11 @@ function emitPayloadArrayObjectFields(
           && arrayKey === 'suspects'
           && itemKey === 'photoUrl'
           && itemType === 'string'
+      const isInvestigationQuestionLinkedFileId
+        = isInvestigationActivitySlug(slug)
+          && arrayKey === 'questions'
+          && itemKey === 'linkedFileId'
+          && itemType === 'string'
       const isFraudTriangleDocumentUrl
         = isFraudTriangleSlug(slug)
           && arrayKey === 'documents'
@@ -1018,6 +1172,9 @@ function emitPayloadArrayObjectFields(
           : {}),
         ...(isFraudTriangleDocumentUrl
           ? { customType: 'media-url' as const, mediaUrlMode: 'any' as const }
+          : {}),
+        ...(isInvestigationQuestionLinkedFileId
+          ? { customType: 'investigation-linked-file-select' as const }
           : {}),
       })
     }
@@ -1251,6 +1408,14 @@ export function appendPayloadArrayItem(
   if (arrayPath[0] === 'payload') {
     ensureFraudSchemesHaveIds(next)
     ensureSolveTheCaseFamilyIds(next)
+    // Only heal investigation file rows when a row is appended to `payload.files`
+    // itself. Running these on every append (e.g. `payload.questions`) caused
+    // unrelated rows to re-render and made add-row / collapsible interactions
+    // feel "stuck" because the files array reference changed on every click.
+    if (arrayPath.length === 2 && arrayPath[1] === 'files') {
+      ensureInvestigationFileIds(next)
+      ensureInvestigationFilePositions(next)
+    }
   }
   if (
     arrayPath.length >= 2
@@ -1494,6 +1659,8 @@ export function padPayloadArraysFromContract(
   }
   ensureFraudSchemesHaveIds(next)
   ensureSolveTheCaseFamilyIds(next)
+  ensureInvestigationFileIds(next)
+  ensureInvestigationFilePositions(next)
   seedVideoActivityPayloadDefaults(next, options?.componentSlug)
   return next
 }
