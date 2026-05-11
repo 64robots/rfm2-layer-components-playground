@@ -519,6 +519,7 @@ const CANONICAL_FORM_FIELD_KEY_ORDER: readonly string[] = [
   'eyebrow',
   'label',
   'name',
+  'heading',
   'body',
   'description',
   'prompt',
