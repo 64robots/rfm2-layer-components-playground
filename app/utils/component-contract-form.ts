@@ -236,8 +236,6 @@ function investigationFileDefaultPosition(
   const row = Math.floor(index / cols)
   const col = index % cols
   const cellWidth = 70 / cols
-  // Deterministic jitter so the "messy desk" look is stable across renders but
-  // varies per slot (index drives the rotation seed).
   const rotationSeed = Math.sin(index * 12.9898) * 43758.5453
   const rotation = Math.round(((rotationSeed - Math.floor(rotationSeed)) * 8 - 4) * 10) / 10
   return {
@@ -296,6 +294,58 @@ export function ensureInvestigationFilePositions(draft: Record<string, unknown>)
     mutated = true
   }
   return mutated
+}
+
+/**
+ * Persist a desk drag into `payload.files[].position` so Save / reload keeps layout.
+ * Preview stores live layout in `interactionState.filePositions`; the API only stores payload.
+ */
+export function applyInvestigationFilePositionToPayload(
+  draft: Record<string, unknown>,
+  fileId: string,
+  position: { x: number, y: number, rotation?: number },
+): boolean {
+  if (!fileId || typeof position.x !== 'number' || typeof position.y !== 'number') {
+    return false
+  }
+  const files = getValueAtPath(draft, ['payload', 'files'])
+  if (!Array.isArray(files)) {
+    return false
+  }
+  for (let i = 0; i < files.length; i++) {
+    const row = files[i]
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      continue
+    }
+    const r = row as Record<string, unknown>
+    if (String(r.id ?? '') !== fileId) {
+      continue
+    }
+    const defaults = investigationFileDefaultPosition(i, files.length)
+    const prev = isRecord(r.position) ? (r.position as Record<string, unknown>) : null
+    const rotation = typeof position.rotation === 'number' && Number.isFinite(position.rotation)
+      ? position.rotation
+      : typeof prev?.rotation === 'number' && Number.isFinite(prev.rotation)
+        ? prev.rotation
+        : defaults.rotation
+    const nextPos = {
+      x: Math.round(position.x * 10) / 10,
+      y: Math.round(position.y * 10) / 10,
+      rotation,
+    }
+    const unchanged = prev
+      && typeof prev.x === 'number'
+      && typeof prev.y === 'number'
+      && prev.x === nextPos.x
+      && prev.y === nextPos.y
+      && prev.rotation === nextPos.rotation
+    if (unchanged) {
+      return false
+    }
+    r.position = nextPos
+    return true
+  }
+  return false
 }
 
 /**
