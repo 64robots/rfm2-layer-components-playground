@@ -194,6 +194,29 @@ export function isInvestigationActivitySlug(slug: string | undefined): boolean {
   return slug === 'investigation' || slug === 'accessible-investigation'
 }
 
+/** `payload.files[]` fields stored in the draft but not edited in the lesson form. */
+export const INVESTIGATION_FILE_FORM_HIDDEN_KEYS = new Set([
+  'slug',
+  'sort',
+  'mimeType',
+  'thumbnailUrl',
+  'pages',
+])
+
+export function isInvestigationFileFormHiddenKey(
+  componentSlug: string | undefined,
+  arrayKey: string,
+  parentArrayKey: string | undefined,
+  itemKey: string,
+): boolean {
+  return (
+    isInvestigationActivitySlug(componentSlug)
+    && arrayKey === 'files'
+    && !parentArrayKey
+    && INVESTIGATION_FILE_FORM_HIDDEN_KEYS.has(itemKey)
+  )
+}
+
 /**
  * Ensure every `payload.files[]` row in an investigation draft has a non-empty
  * string `id`. Heals rows that predate the auto-id wiring (or were imported
@@ -650,6 +673,26 @@ function orderedArrayItemPropertyKeys(
     return orderKeysWithPreferredHead(keys, ['label', 'file'], itemProperties)
   }
 
+  const isInvestigationFiles = isInvestigationActivitySlug(slug) && arrayKey === 'files' && !parentArrayKey
+  if (isInvestigationFiles) {
+    keys = keys.filter((k) => k !== 'id' && !INVESTIGATION_FILE_FORM_HIDDEN_KEYS.has(k))
+    return orderKeysWithPreferredHead(
+      keys,
+      [
+        'title',
+        'url',
+        'summary',
+        'type',
+        'viewableAtOnset',
+        'viewableAfterId',
+        'decisionSlug',
+        'directions',
+        'position',
+      ],
+      itemProperties,
+    )
+  }
+
   keys = keys.filter((k) => k !== 'id')
   return orderKeysWithPreferredHead(keys, CANONICAL_FORM_FIELD_KEY_ORDER, itemProperties)
 }
@@ -1078,6 +1121,10 @@ function emitPayloadArrayObjectFields(
         continue
       }
 
+      if (isInvestigationFileFormHiddenKey(options.componentSlug, arrayKey, parentArrayKey, itemKey)) {
+        continue
+      }
+
       const itemType = getSchemaType(itemProp)
 
       if (schemaLooksLikeArray(itemProp) && itemProp.items) {
@@ -1191,6 +1238,11 @@ function emitPayloadArrayObjectFields(
           && arrayKey === 'questions'
           && itemKey === 'linkedFileId'
           && itemType === 'string'
+      const isInvestigationFileViewableAfterId
+        = isInvestigationActivitySlug(slug)
+          && arrayKey === 'files'
+          && itemKey === 'viewableAfterId'
+          && itemType === 'string'
       const isFraudTriangleDocumentUrl
         = isFraudTriangleSlug(slug)
           && arrayKey === 'documents'
@@ -1224,7 +1276,7 @@ function emitPayloadArrayObjectFields(
         ...(isFraudTriangleDocumentUrl
           ? { customType: 'media-url' as const, mediaUrlMode: 'any' as const }
           : {}),
-        ...(isInvestigationQuestionLinkedFileId
+        ...(isInvestigationQuestionLinkedFileId || isInvestigationFileViewableAfterId
           ? { customType: 'investigation-linked-file-select' as const }
           : {}),
       })
