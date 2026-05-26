@@ -194,6 +194,29 @@ export function isInvestigationActivitySlug(slug: string | undefined): boolean {
   return slug === 'investigation' || slug === 'accessible-investigation'
 }
 
+/** `payload.files[]` fields stored in the draft but not edited in the lesson form. */
+export const INVESTIGATION_FILE_FORM_HIDDEN_KEYS = new Set([
+  'slug',
+  'sort',
+  'mimeType',
+  'thumbnailUrl',
+  'pages',
+])
+
+export function isInvestigationFileFormHiddenKey(
+  componentSlug: string | undefined,
+  arrayKey: string,
+  parentArrayKey: string | undefined,
+  itemKey: string,
+): boolean {
+  return (
+    isInvestigationActivitySlug(componentSlug)
+    && arrayKey === 'files'
+    && !parentArrayKey
+    && INVESTIGATION_FILE_FORM_HIDDEN_KEYS.has(itemKey)
+  )
+}
+
 /**
  * Ensure every `payload.files[]` row in an investigation draft has a non-empty
  * string `id`. Heals rows that predate the auto-id wiring (or were imported
@@ -222,26 +245,70 @@ export function ensureInvestigationFileIds(draft: Record<string, unknown>): bool
   return mutated
 }
 
+const INVESTIGATION_DESK_MIN_X = 4
+const INVESTIGATION_DESK_MIN_Y = 4
+const INVESTIGATION_AUTO_GRID_MAX_X = 76
+const INVESTIGATION_AUTO_GRID_MAX_Y = 68
+const INVESTIGATION_LEGACY_AUTO_GRID_MAX_COLUMNS = 3
+const INVESTIGATION_LEGACY_AUTO_GRID_WIDTH = 70
+const INVESTIGATION_LEGACY_AUTO_GRID_ROW_STEP = 28
+const INVESTIGATION_LARGE_AUTO_GRID_COLUMNS = 5
+const INVESTIGATION_LARGE_AUTO_GRID_ROW_STEP = 16
+
+function deterministicInvestigationFileRotation(index: number): number {
+  const rotationSeed = Math.sin(index * 12.9898) * 43758.5453
+  return Math.round(((rotationSeed - Math.floor(rotationSeed)) * 8 - 4) * 10) / 10
+}
+
+function investigationFileGridColumnCount(total: number): number {
+  if (total <= 9) {
+    return Math.max(1, Math.min(total || 1, INVESTIGATION_LEGACY_AUTO_GRID_MAX_COLUMNS))
+  }
+  return INVESTIGATION_LARGE_AUTO_GRID_COLUMNS
+}
+
+function investigationFileLegacyDefaultPosition(
+  index: number,
+  total: number,
+): { x: number, y: number, rotation: number } {
+  const cols = investigationFileGridColumnCount(total)
+  const row = Math.floor(index / cols)
+  const col = index % cols
+  const cellWidth = INVESTIGATION_LEGACY_AUTO_GRID_WIDTH / cols
+  return {
+    x: Math.round((INVESTIGATION_DESK_MIN_X + col * cellWidth) * 10) / 10,
+    y: Math.round((INVESTIGATION_DESK_MIN_Y + row * INVESTIGATION_LEGACY_AUTO_GRID_ROW_STEP) * 10) / 10,
+    rotation: deterministicInvestigationFileRotation(index),
+  }
+}
+
 /**
  * Auto-grid layout for investigation files without an explicit position.
- * Mirrors `InvestigationDesktop.vue`'s `autoGridPosition` (3-column grid,
- * ~70% width spread, 28% row height) so the seeded default places files in
- * the same visual slot the renderer would pick at runtime.
+ * Mirrors `InvestigationDesktop.vue`'s bounded auto-grid so seeded files start
+ * in the same visual slots the renderer would pick at runtime.
  */
 function investigationFileDefaultPosition(
   index: number,
   total: number,
 ): { x: number, y: number, rotation: number } {
-  const cols = Math.max(1, Math.min(total || 1, 3))
+  if (total <= 9) {
+    return investigationFileLegacyDefaultPosition(index, total)
+  }
+
+  const cols = investigationFileGridColumnCount(total)
   const row = Math.floor(index / cols)
   const col = index % cols
-  const cellWidth = 70 / cols
-  const rotationSeed = Math.sin(index * 12.9898) * 43758.5453
-  const rotation = Math.round(((rotationSeed - Math.floor(rotationSeed)) * 8 - 4) * 10) / 10
+  const xStep = cols > 1 ? (INVESTIGATION_AUTO_GRID_MAX_X - INVESTIGATION_DESK_MIN_X) / (cols - 1) : 0
+  const yStep = Math.min(
+    INVESTIGATION_LARGE_AUTO_GRID_ROW_STEP,
+    (INVESTIGATION_AUTO_GRID_MAX_Y - INVESTIGATION_DESK_MIN_Y)
+    / Math.max(1, Math.ceil((total || 1) / cols) - 1),
+  )
+
   return {
-    x: Math.round((4 + col * cellWidth) * 10) / 10,
-    y: Math.round((4 + row * 28) * 10) / 10,
-    rotation,
+    x: Math.round((INVESTIGATION_DESK_MIN_X + col * xStep) * 10) / 10,
+    y: Math.round((INVESTIGATION_DESK_MIN_Y + row * yStep) * 10) / 10,
+    rotation: deterministicInvestigationFileRotation(index),
   }
 }
 
@@ -648,6 +715,26 @@ function orderedArrayItemPropertyKeys(
   if (isVideoActivitySlug(slug) && arrayKey === 'attachments' && !parentArrayKey) {
     keys = keys.filter((k) => k !== 'id')
     return orderKeysWithPreferredHead(keys, ['label', 'file'], itemProperties)
+  }
+
+  const isInvestigationFiles = isInvestigationActivitySlug(slug) && arrayKey === 'files' && !parentArrayKey
+  if (isInvestigationFiles) {
+    keys = keys.filter((k) => k !== 'id' && !INVESTIGATION_FILE_FORM_HIDDEN_KEYS.has(k))
+    return orderKeysWithPreferredHead(
+      keys,
+      [
+        'title',
+        'url',
+        'summary',
+        'type',
+        'viewableAtOnset',
+        'viewableAfterId',
+        'decisionSlug',
+        'directions',
+        'position',
+      ],
+      itemProperties,
+    )
   }
 
   keys = keys.filter((k) => k !== 'id')
@@ -1078,6 +1165,10 @@ function emitPayloadArrayObjectFields(
         continue
       }
 
+      if (isInvestigationFileFormHiddenKey(options.componentSlug, arrayKey, parentArrayKey, itemKey)) {
+        continue
+      }
+
       const itemType = getSchemaType(itemProp)
 
       if (schemaLooksLikeArray(itemProp) && itemProp.items) {
@@ -1191,6 +1282,11 @@ function emitPayloadArrayObjectFields(
           && arrayKey === 'questions'
           && itemKey === 'linkedFileId'
           && itemType === 'string'
+      const isInvestigationFileViewableAfterId
+        = isInvestigationActivitySlug(slug)
+          && arrayKey === 'files'
+          && itemKey === 'viewableAfterId'
+          && itemType === 'string'
       const isFraudTriangleDocumentUrl
         = isFraudTriangleSlug(slug)
           && arrayKey === 'documents'
@@ -1224,7 +1320,7 @@ function emitPayloadArrayObjectFields(
         ...(isFraudTriangleDocumentUrl
           ? { customType: 'media-url' as const, mediaUrlMode: 'any' as const }
           : {}),
-        ...(isInvestigationQuestionLinkedFileId
+        ...(isInvestigationQuestionLinkedFileId || isInvestigationFileViewableAfterId
           ? { customType: 'investigation-linked-file-select' as const }
           : {}),
       })
