@@ -299,6 +299,57 @@ export function ensureInvestigationFilePositions(draft: Record<string, unknown>)
 }
 
 /**
+ * Apply a dragged file position from the live investigation preview onto the
+ * matching `payload.files[]` row. Mutates `draft` in place; returns `false`
+ * when the file id is unknown or coordinates are unchanged.
+ */
+export function applyInvestigationFilePositionToPayload(
+  draft: Record<string, unknown>,
+  fileId: string,
+  position: { x: number, y: number, rotation?: number },
+): boolean {
+  const trimmedId = fileId.trim()
+  if (!trimmedId) {
+    return false
+  }
+  const files = getValueAtPath(draft, ['payload', 'files'])
+  if (!Array.isArray(files)) {
+    return false
+  }
+  for (const row of files) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      continue
+    }
+    const r = row as Record<string, unknown>
+    const currentId = typeof r.id === 'string' ? r.id.trim() : ''
+    if (currentId !== trimmedId) {
+      continue
+    }
+    const existing = isRecord(r.position) ? (r.position as Record<string, unknown>) : null
+    const nextPosition: Record<string, unknown> = {
+      x: position.x,
+      y: position.y,
+    }
+    if (typeof position.rotation === 'number' && Number.isFinite(position.rotation)) {
+      nextPosition.rotation = position.rotation
+    } else if (existing && typeof existing.rotation === 'number' && Number.isFinite(existing.rotation)) {
+      nextPosition.rotation = existing.rotation
+    }
+    if (
+      existing
+      && existing.x === nextPosition.x
+      && existing.y === nextPosition.y
+      && existing.rotation === nextPosition.rotation
+    ) {
+      return false
+    }
+    r.position = nextPosition
+    return true
+  }
+  return false
+}
+
+/**
  * Investigation question → file link options.
  * Reads `payload.files[]` from the current draft and returns `{ value, label }`
  * entries suitable for a `<USelect>` that populates `question.linkedFileId`.
@@ -395,6 +446,11 @@ export function getSchemaType(schema: JsonSchemaProperty | undefined): string | 
   return typeof schema.type === 'string' ? schema.type : null
 }
 
+export function isNumericSchemaType(schema: JsonSchemaProperty | undefined): boolean {
+  const type = getSchemaType(schema)
+  return type === 'number' || type === 'integer'
+}
+
 function dereferenceSchemaProperty(
   prop: JsonSchemaProperty | undefined,
   rootWithDefs: JsonSchemaProperty,
@@ -480,7 +536,7 @@ export function collectSchemaFields(
       continue
     }
 
-    if (baseType === 'string' || baseType === 'number' || baseType === 'boolean' || Array.isArray(property.enum)) {
+    if (baseType === 'string' || isNumericSchemaType(property) || baseType === 'boolean' || Array.isArray(property.enum)) {
       out.push({
         id: nextPath.join('.'),
         label: property.title || humanizeKey(key),
@@ -635,7 +691,7 @@ function itemTemplateFromProperties(properties: Record<string, JsonSchemaPropert
     // initial values (e.g. `viewableAtOnset: true` for investigation files).
     if (t === 'boolean' && typeof prop.default === 'boolean') {
       row[itemKey] = prop.default
-    } else if (t === 'number' && typeof prop.default === 'number') {
+    } else if (isNumericSchemaType(prop) && typeof prop.default === 'number') {
       row[itemKey] = prop.default
     } else if (t === 'array' && Array.isArray(prop.default)) {
       row[itemKey] = [...prop.default]
@@ -643,7 +699,7 @@ function itemTemplateFromProperties(properties: Record<string, JsonSchemaPropert
       row[itemKey] = prop.default
     } else if (t === 'boolean') {
       row[itemKey] = false
-    } else if (t === 'number') {
+    } else if (isNumericSchemaType(prop)) {
       row[itemKey] = ''
     } else if (t === 'array') {
       row[itemKey] = []
@@ -2126,7 +2182,7 @@ export function applyFieldUpdateToDraft(
     return next
   }
 
-  if (getSchemaType(field.schema) === 'number') {
+  if (isNumericSchemaType(field.schema)) {
     const parsed = Number(value)
     setValueAtPath(next, field.path, Number.isNaN(parsed) ? value : parsed)
   } else if (getSchemaType(field.schema) === 'boolean') {
