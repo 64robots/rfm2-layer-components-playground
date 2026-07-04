@@ -15,6 +15,7 @@ import {
   buildFormFieldsFromDetail,
   getSchemaType,
   getValueAtPath,
+  isNumericSchemaType,
   exclusiveCorrectArrayPathForField,
   isExclusiveCorrectRadioChecked,
   normalizePropsDraft,
@@ -804,7 +805,7 @@ onBeforeUnmount(() => {
 
                       <UInput
                         v-else
-                        :type="getSchemaType(field.schema) === 'number' ? 'number' : 'text'"
+                        :type="isNumericSchemaType(field.schema) ? 'number' : 'text'"
                         :model-value="String(getFieldValue(field) ?? '')"
                         :disabled="field.disabled"
                         :readonly="Boolean(field.readOnly)"
@@ -914,7 +915,7 @@ onBeforeUnmount(() => {
 
                           <UInput
                             v-else
-                            :type="getSchemaType(field.schema) === 'number' ? 'number' : 'text'"
+                            :type="isNumericSchemaType(field.schema) ? 'number' : 'text'"
                             :model-value="String(getFieldValue(field) ?? '')"
                             :disabled="field.disabled"
                             :readonly="Boolean(field.readOnly)"

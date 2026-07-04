@@ -364,15 +364,19 @@ export function ensureInvestigationFilePositions(draft: Record<string, unknown>)
 }
 
 /**
- * Persist a desk drag into `payload.files[].position` so Save / reload keeps layout.
- * Preview stores live layout in `interactionState.filePositions`; the API only stores payload.
+ * Apply a dragged file position from the live investigation preview onto the
+ * matching `payload.files[]` row. Preview stores live layout in
+ * `interactionState.filePositions`; the API only stores payload.
+ * Mutates `draft` in place; returns `false` when the file id is unknown or
+ * coordinates are unchanged.
  */
 export function applyInvestigationFilePositionToPayload(
   draft: Record<string, unknown>,
   fileId: string,
   position: { x: number, y: number, rotation?: number },
 ): boolean {
-  if (!fileId || typeof position.x !== 'number' || typeof position.y !== 'number') {
+  const trimmedId = fileId.trim()
+  if (!trimmedId || typeof position.x !== 'number' || typeof position.y !== 'number') {
     return false
   }
   const files = getValueAtPath(draft, ['payload', 'files'])
@@ -385,7 +389,8 @@ export function applyInvestigationFilePositionToPayload(
       continue
     }
     const r = row as Record<string, unknown>
-    if (String(r.id ?? '') !== fileId) {
+    const currentId = typeof r.id === 'string' ? r.id.trim() : String(r.id ?? '').trim()
+    if (currentId !== trimmedId) {
       continue
     }
     const defaults = investigationFileDefaultPosition(i, files.length)
@@ -512,6 +517,11 @@ export function getSchemaType(schema: JsonSchemaProperty | undefined): string | 
   return typeof schema.type === 'string' ? schema.type : null
 }
 
+export function isNumericSchemaType(schema: JsonSchemaProperty | undefined): boolean {
+  const type = getSchemaType(schema)
+  return type === 'number' || type === 'integer'
+}
+
 function dereferenceSchemaProperty(
   prop: JsonSchemaProperty | undefined,
   rootWithDefs: JsonSchemaProperty,
@@ -597,7 +607,7 @@ export function collectSchemaFields(
       continue
     }
 
-    if (baseType === 'string' || baseType === 'number' || baseType === 'boolean' || Array.isArray(property.enum)) {
+    if (baseType === 'string' || isNumericSchemaType(property) || baseType === 'boolean' || Array.isArray(property.enum)) {
       out.push({
         id: nextPath.join('.'),
         label: property.title || humanizeKey(key),
@@ -773,7 +783,7 @@ function itemTemplateFromProperties(properties: Record<string, JsonSchemaPropert
     // initial values (e.g. `viewableAtOnset: true` for investigation files).
     if (t === 'boolean' && typeof prop.default === 'boolean') {
       row[itemKey] = prop.default
-    } else if (t === 'number' && typeof prop.default === 'number') {
+    } else if (isNumericSchemaType(prop) && typeof prop.default === 'number') {
       row[itemKey] = prop.default
     } else if (t === 'array' && Array.isArray(prop.default)) {
       row[itemKey] = [...prop.default]
@@ -781,7 +791,7 @@ function itemTemplateFromProperties(properties: Record<string, JsonSchemaPropert
       row[itemKey] = prop.default
     } else if (t === 'boolean') {
       row[itemKey] = false
-    } else if (t === 'number') {
+    } else if (isNumericSchemaType(prop)) {
       row[itemKey] = ''
     } else if (t === 'array') {
       row[itemKey] = []
@@ -2273,7 +2283,7 @@ export function applyFieldUpdateToDraft(
     return next
   }
 
-  if (getSchemaType(field.schema) === 'number') {
+  if (isNumericSchemaType(field.schema)) {
     const parsed = Number(value)
     setValueAtPath(next, field.path, Number.isNaN(parsed) ? value : parsed)
   } else if (getSchemaType(field.schema) === 'boolean') {
