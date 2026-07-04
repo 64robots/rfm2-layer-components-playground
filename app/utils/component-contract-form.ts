@@ -194,6 +194,29 @@ export function isInvestigationActivitySlug(slug: string | undefined): boolean {
   return slug === 'investigation' || slug === 'accessible-investigation'
 }
 
+/** `payload.files[]` fields stored in the draft but not edited in the lesson form. */
+export const INVESTIGATION_FILE_FORM_HIDDEN_KEYS = new Set([
+  'slug',
+  'sort',
+  'mimeType',
+  'thumbnailUrl',
+  'pages',
+])
+
+export function isInvestigationFileFormHiddenKey(
+  componentSlug: string | undefined,
+  arrayKey: string,
+  parentArrayKey: string | undefined,
+  itemKey: string,
+): boolean {
+  return (
+    isInvestigationActivitySlug(componentSlug)
+    && arrayKey === 'files'
+    && !parentArrayKey
+    && INVESTIGATION_FILE_FORM_HIDDEN_KEYS.has(itemKey)
+  )
+}
+
 /**
  * Ensure every `payload.files[]` row in an investigation draft has a non-empty
  * string `id`. Heals rows that predate the auto-id wiring (or were imported
@@ -222,28 +245,70 @@ export function ensureInvestigationFileIds(draft: Record<string, unknown>): bool
   return mutated
 }
 
+const INVESTIGATION_DESK_MIN_X = 4
+const INVESTIGATION_DESK_MIN_Y = 4
+const INVESTIGATION_AUTO_GRID_MAX_X = 76
+const INVESTIGATION_AUTO_GRID_MAX_Y = 68
+const INVESTIGATION_LEGACY_AUTO_GRID_MAX_COLUMNS = 3
+const INVESTIGATION_LEGACY_AUTO_GRID_WIDTH = 70
+const INVESTIGATION_LEGACY_AUTO_GRID_ROW_STEP = 28
+const INVESTIGATION_LARGE_AUTO_GRID_COLUMNS = 5
+const INVESTIGATION_LARGE_AUTO_GRID_ROW_STEP = 16
+
+function deterministicInvestigationFileRotation(index: number): number {
+  const rotationSeed = Math.sin(index * 12.9898) * 43758.5453
+  return Math.round(((rotationSeed - Math.floor(rotationSeed)) * 8 - 4) * 10) / 10
+}
+
+function investigationFileGridColumnCount(total: number): number {
+  if (total <= 9) {
+    return Math.max(1, Math.min(total || 1, INVESTIGATION_LEGACY_AUTO_GRID_MAX_COLUMNS))
+  }
+  return INVESTIGATION_LARGE_AUTO_GRID_COLUMNS
+}
+
+function investigationFileLegacyDefaultPosition(
+  index: number,
+  total: number,
+): { x: number, y: number, rotation: number } {
+  const cols = investigationFileGridColumnCount(total)
+  const row = Math.floor(index / cols)
+  const col = index % cols
+  const cellWidth = INVESTIGATION_LEGACY_AUTO_GRID_WIDTH / cols
+  return {
+    x: Math.round((INVESTIGATION_DESK_MIN_X + col * cellWidth) * 10) / 10,
+    y: Math.round((INVESTIGATION_DESK_MIN_Y + row * INVESTIGATION_LEGACY_AUTO_GRID_ROW_STEP) * 10) / 10,
+    rotation: deterministicInvestigationFileRotation(index),
+  }
+}
+
 /**
  * Auto-grid layout for investigation files without an explicit position.
- * Mirrors `InvestigationDesktop.vue`'s `autoGridPosition` (3-column grid,
- * ~70% width spread, 28% row height) so the seeded default places files in
- * the same visual slot the renderer would pick at runtime.
+ * Mirrors `InvestigationDesktop.vue`'s bounded auto-grid so seeded files start
+ * in the same visual slots the renderer would pick at runtime.
  */
 function investigationFileDefaultPosition(
   index: number,
   total: number,
 ): { x: number, y: number, rotation: number } {
-  const cols = Math.max(1, Math.min(total || 1, 3))
+  if (total <= 9) {
+    return investigationFileLegacyDefaultPosition(index, total)
+  }
+
+  const cols = investigationFileGridColumnCount(total)
   const row = Math.floor(index / cols)
   const col = index % cols
-  const cellWidth = 70 / cols
-  // Deterministic jitter so the "messy desk" look is stable across renders but
-  // varies per slot (index drives the rotation seed).
-  const rotationSeed = Math.sin(index * 12.9898) * 43758.5453
-  const rotation = Math.round(((rotationSeed - Math.floor(rotationSeed)) * 8 - 4) * 10) / 10
+  const xStep = cols > 1 ? (INVESTIGATION_AUTO_GRID_MAX_X - INVESTIGATION_DESK_MIN_X) / (cols - 1) : 0
+  const yStep = Math.min(
+    INVESTIGATION_LARGE_AUTO_GRID_ROW_STEP,
+    (INVESTIGATION_AUTO_GRID_MAX_Y - INVESTIGATION_DESK_MIN_Y)
+    / Math.max(1, Math.ceil((total || 1) / cols) - 1),
+  )
+
   return {
-    x: Math.round((4 + col * cellWidth) * 10) / 10,
-    y: Math.round((4 + row * 28) * 10) / 10,
-    rotation,
+    x: Math.round((INVESTIGATION_DESK_MIN_X + col * xStep) * 10) / 10,
+    y: Math.round((INVESTIGATION_DESK_MIN_Y + row * yStep) * 10) / 10,
+    rotation: deterministicInvestigationFileRotation(index),
   }
 }
 
@@ -300,8 +365,10 @@ export function ensureInvestigationFilePositions(draft: Record<string, unknown>)
 
 /**
  * Apply a dragged file position from the live investigation preview onto the
- * matching `payload.files[]` row. Mutates `draft` in place; returns `false`
- * when the file id is unknown or coordinates are unchanged.
+ * matching `payload.files[]` row. Preview stores live layout in
+ * `interactionState.filePositions`; the API only stores payload.
+ * Mutates `draft` in place; returns `false` when the file id is unknown or
+ * coordinates are unchanged.
  */
 export function applyInvestigationFilePositionToPayload(
   draft: Record<string, unknown>,
@@ -309,41 +376,45 @@ export function applyInvestigationFilePositionToPayload(
   position: { x: number, y: number, rotation?: number },
 ): boolean {
   const trimmedId = fileId.trim()
-  if (!trimmedId) {
+  if (!trimmedId || typeof position.x !== 'number' || typeof position.y !== 'number') {
     return false
   }
   const files = getValueAtPath(draft, ['payload', 'files'])
   if (!Array.isArray(files)) {
     return false
   }
-  for (const row of files) {
+  for (let i = 0; i < files.length; i++) {
+    const row = files[i]
     if (!row || typeof row !== 'object' || Array.isArray(row)) {
       continue
     }
     const r = row as Record<string, unknown>
-    const currentId = typeof r.id === 'string' ? r.id.trim() : ''
+    const currentId = typeof r.id === 'string' ? r.id.trim() : String(r.id ?? '').trim()
     if (currentId !== trimmedId) {
       continue
     }
-    const existing = isRecord(r.position) ? (r.position as Record<string, unknown>) : null
-    const nextPosition: Record<string, unknown> = {
-      x: position.x,
-      y: position.y,
+    const defaults = investigationFileDefaultPosition(i, files.length)
+    const prev = isRecord(r.position) ? (r.position as Record<string, unknown>) : null
+    const rotation = typeof position.rotation === 'number' && Number.isFinite(position.rotation)
+      ? position.rotation
+      : typeof prev?.rotation === 'number' && Number.isFinite(prev.rotation)
+        ? prev.rotation
+        : defaults.rotation
+    const nextPos = {
+      x: Math.round(position.x * 10) / 10,
+      y: Math.round(position.y * 10) / 10,
+      rotation,
     }
-    if (typeof position.rotation === 'number' && Number.isFinite(position.rotation)) {
-      nextPosition.rotation = position.rotation
-    } else if (existing && typeof existing.rotation === 'number' && Number.isFinite(existing.rotation)) {
-      nextPosition.rotation = existing.rotation
-    }
-    if (
-      existing
-      && existing.x === nextPosition.x
-      && existing.y === nextPosition.y
-      && existing.rotation === nextPosition.rotation
-    ) {
+    const unchanged = prev
+      && typeof prev.x === 'number'
+      && typeof prev.y === 'number'
+      && prev.x === nextPos.x
+      && prev.y === nextPos.y
+      && prev.rotation === nextPos.rotation
+    if (unchanged) {
       return false
     }
-    r.position = nextPosition
+    r.position = nextPos
     return true
   }
   return false
@@ -575,6 +646,7 @@ const CANONICAL_FORM_FIELD_KEY_ORDER: readonly string[] = [
   'eyebrow',
   'label',
   'name',
+  'heading',
   'body',
   'description',
   'prompt',
@@ -653,6 +725,26 @@ function orderedArrayItemPropertyKeys(
   if (isVideoActivitySlug(slug) && arrayKey === 'attachments' && !parentArrayKey) {
     keys = keys.filter((k) => k !== 'id')
     return orderKeysWithPreferredHead(keys, ['label', 'file'], itemProperties)
+  }
+
+  const isInvestigationFiles = isInvestigationActivitySlug(slug) && arrayKey === 'files' && !parentArrayKey
+  if (isInvestigationFiles) {
+    keys = keys.filter((k) => k !== 'id' && !INVESTIGATION_FILE_FORM_HIDDEN_KEYS.has(k))
+    return orderKeysWithPreferredHead(
+      keys,
+      [
+        'title',
+        'url',
+        'summary',
+        'type',
+        'viewableAtOnset',
+        'viewableAfterId',
+        'decisionSlug',
+        'directions',
+        'position',
+      ],
+      itemProperties,
+    )
   }
 
   keys = keys.filter((k) => k !== 'id')
@@ -1083,6 +1175,10 @@ function emitPayloadArrayObjectFields(
         continue
       }
 
+      if (isInvestigationFileFormHiddenKey(options.componentSlug, arrayKey, parentArrayKey, itemKey)) {
+        continue
+      }
+
       const itemType = getSchemaType(itemProp)
 
       if (schemaLooksLikeArray(itemProp) && itemProp.items) {
@@ -1196,6 +1292,11 @@ function emitPayloadArrayObjectFields(
           && arrayKey === 'questions'
           && itemKey === 'linkedFileId'
           && itemType === 'string'
+      const isInvestigationFileViewableAfterId
+        = isInvestigationActivitySlug(slug)
+          && arrayKey === 'files'
+          && itemKey === 'viewableAfterId'
+          && itemType === 'string'
       const isFraudTriangleDocumentUrl
         = isFraudTriangleSlug(slug)
           && arrayKey === 'documents'
@@ -1229,7 +1330,7 @@ function emitPayloadArrayObjectFields(
         ...(isFraudTriangleDocumentUrl
           ? { customType: 'media-url' as const, mediaUrlMode: 'any' as const }
           : {}),
-        ...(isInvestigationQuestionLinkedFileId
+        ...(isInvestigationQuestionLinkedFileId || isInvestigationFileViewableAfterId
           ? { customType: 'investigation-linked-file-select' as const }
           : {}),
       })
