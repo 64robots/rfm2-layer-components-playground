@@ -201,6 +201,7 @@ export const INVESTIGATION_FILE_FORM_HIDDEN_KEYS = new Set([
   'mimeType',
   'thumbnailUrl',
   'pages',
+  'validationBoxes',
 ])
 
 export function isInvestigationFileFormHiddenKey(
@@ -416,6 +417,121 @@ export function applyInvestigationFilePositionToPayload(
     }
     r.position = nextPos
     return true
+  }
+  return false
+}
+
+function investigationFileRowById(
+  draft: Record<string, unknown>,
+  fileId: string,
+): Record<string, unknown> | null {
+  const trimmedId = fileId.trim()
+  if (!trimmedId) {
+    return null
+  }
+  const files = getValueAtPath(draft, ['payload', 'files'])
+  if (!Array.isArray(files)) {
+    return null
+  }
+  for (const row of files) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      continue
+    }
+    const r = row as Record<string, unknown>
+    const currentId = typeof r.id === 'string' ? r.id.trim() : String(r.id ?? '').trim()
+    if (currentId === trimmedId) {
+      return r
+    }
+  }
+  return null
+}
+
+function investigationValidationBoxesForFile(
+  fileRow: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const raw = fileRow.validationBoxes
+  if (!Array.isArray(raw)) {
+    fileRow.validationBoxes = []
+    return fileRow.validationBoxes as Record<string, unknown>[]
+  }
+  return raw.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
+}
+
+export function applyInvestigationValidationBoxAddedToPayload(
+  draft: Record<string, unknown>,
+  fileId: string,
+  box: Record<string, unknown>,
+): boolean {
+  const fileRow = investigationFileRowById(draft, fileId)
+  if (!fileRow) {
+    return false
+  }
+  const boxes = investigationValidationBoxesForFile(fileRow)
+  const nextBox = { ...box, fileId: fileId.trim() }
+  boxes.push(nextBox)
+  fileRow.validationBoxes = boxes
+  return true
+}
+
+export function applyInvestigationValidationBoxUpdatedToPayload(
+  draft: Record<string, unknown>,
+  boxId: string,
+  patch: Record<string, unknown>,
+): boolean {
+  const trimmedBoxId = boxId.trim()
+  if (!trimmedBoxId) {
+    return false
+  }
+  const files = getValueAtPath(draft, ['payload', 'files'])
+  if (!Array.isArray(files)) {
+    return false
+  }
+  for (const row of files) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      continue
+    }
+    const fileRow = row as Record<string, unknown>
+    const boxes = investigationValidationBoxesForFile(fileRow)
+    for (let i = 0; i < boxes.length; i++) {
+      const current = boxes[i]
+      const currentId = typeof current?.id === 'string' ? current.id.trim() : ''
+      if (currentId !== trimmedBoxId) {
+        continue
+      }
+      boxes[i] = { ...current, ...patch, id: currentId }
+      fileRow.validationBoxes = boxes
+      return true
+    }
+  }
+  return false
+}
+
+export function applyInvestigationValidationBoxRemovedFromPayload(
+  draft: Record<string, unknown>,
+  boxId: string,
+): boolean {
+  const trimmedBoxId = boxId.trim()
+  if (!trimmedBoxId) {
+    return false
+  }
+  const files = getValueAtPath(draft, ['payload', 'files'])
+  if (!Array.isArray(files)) {
+    return false
+  }
+  for (const row of files) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      continue
+    }
+    const fileRow = row as Record<string, unknown>
+    const boxes = investigationValidationBoxesForFile(fileRow)
+    const next = boxes.filter((box) => {
+      const currentId = typeof box.id === 'string' ? box.id.trim() : ''
+      return currentId !== trimmedBoxId
+    })
+    if (next.length !== boxes.length) {
+      fileRow.validationBoxes = next
+      return true
+    }
   }
   return false
 }
