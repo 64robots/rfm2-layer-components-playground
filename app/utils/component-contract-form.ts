@@ -763,6 +763,9 @@ function panelTitleForArrayRow(
   if (arrayKey === 'supportingQuestions') {
     return `Question ${index + 1}`
   }
+  if (arrayKey === 'questions') {
+    return `Question ${index + 1}`
+  }
   if (arrayKey === 'options') {
     return `Option ${index + 1}`
   }
@@ -1121,6 +1124,18 @@ function emitPayloadArrayObjectFields(
     const qIdx = arrayPath[arrayPath.length - 2]!
     const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
     if (kind === 'text') {
+      return
+    }
+  }
+  if (
+    isInvestigationActivitySlug(options.componentSlug)
+    && arrayKey === 'options'
+    && parentArrayKey === 'questions'
+    && arrayPath.length >= 4
+  ) {
+    const qIdx = arrayPath[arrayPath.length - 2]!
+    const type = getValueAtPath(draft, ['payload', 'questions', qIdx, 'type'])
+    if (type !== 'multiple-choice') {
       return
     }
   }
@@ -1912,6 +1927,16 @@ function walkNestedPayloadArrayDescriptors(
     ) {
       continue
     }
+    if (
+      key === 'options'
+      && isInvestigationActivitySlug(componentSlug)
+      && pathPrefix.length >= 2
+      && pathPrefix[pathPrefix.length - 2] === 'questions'
+      && isRecord(obj)
+      && obj.type !== 'multiple-choice'
+    ) {
+      continue
+    }
 
     if (schemaLooksLikeArray(propSchema)) {
       const quizQuestionNonTextOptions =
@@ -1921,11 +1946,18 @@ function walkNestedPayloadArrayDescriptors(
         && pathPrefix[pathPrefix.length - 2] === 'questions'
         && isRecord(obj)
         && obj.kind !== 'text'
+      const investigationMultipleChoiceOptions =
+        key === 'options'
+        && isInvestigationActivitySlug(componentSlug)
+        && pathPrefix.length >= 2
+        && pathPrefix[pathPrefix.length - 2] === 'questions'
+        && isRecord(obj)
+        && obj.type === 'multiple-choice'
 
       let listVal: unknown[] | null = null
       if (Array.isArray(val)) {
         listVal = val
-      } else if (quizQuestionNonTextOptions && (val === undefined || val === null)) {
+      } else if ((quizQuestionNonTextOptions || investigationMultipleChoiceOptions) && (val === undefined || val === null)) {
         listVal = []
       }
 
@@ -2311,6 +2343,32 @@ export function applyFieldUpdateToDraft(
     && /^\d+$/.test(String(p[2]))
     && p[p.length - 1] === 'kind'
     && (value === 'single_select' || value === 'multi_select')
+  ) {
+    const optPath = [...p.slice(0, -1), 'options']
+    const cur = getValueAtPath(next, optPath)
+    if (!Array.isArray(cur)) {
+      setValueAtPath(next, optPath, [])
+    }
+  }
+
+  if (
+    p.length >= 4
+    && p[0] === 'payload'
+    && p[1] === 'questions'
+    && /^\d+$/.test(String(p[2]))
+    && p[p.length - 1] === 'type'
+    && value !== 'multiple-choice'
+  ) {
+    setValueAtPath(next, [...p.slice(0, -1), 'options'], [])
+  }
+
+  if (
+    p.length >= 4
+    && p[0] === 'payload'
+    && p[1] === 'questions'
+    && /^\d+$/.test(String(p[2]))
+    && p[p.length - 1] === 'type'
+    && value === 'multiple-choice'
   ) {
     const optPath = [...p.slice(0, -1), 'options']
     const cur = getValueAtPath(next, optPath)
