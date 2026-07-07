@@ -24,13 +24,16 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
   const runtimeError = ref('')
   /** Bumps on each render request so a slow async render cannot overwrite a newer preview. */
   let previewGeneration = 0
+  /** After the first `renderPod`, prop-only refreshes use `updateProps` (less flicker). */
+  let previewPodPrimed = false
+  let lastRenderedPreviewSlug = ''
 
   async function ensureRuntimeLoaded(): Promise<void> {
     runtimeError.value = ''
     try {
-      await runtime.loadRuntime()
+      await runtime.resolveResolution()
     } catch (error: unknown) {
-      runtimeError.value = error instanceof Error ? error.message : 'Failed to load runtime bundle.'
+      runtimeError.value = error instanceof Error ? error.message : 'Failed to load resolution.'
       throw error
     }
   }
@@ -57,6 +60,9 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
     if (!res) {
       throw new Error('Resolution not available.')
     }
+
+    previewPodPrimed = false
+    lastRenderedPreviewSlug = ''
 
     const cssUrl = res.bundleCssUrl || resolvePreviewAssetUrl(res.cdnBaseUrl, res.bundleCssKey)
     const runtimeUrl = res.vueEsmUrl || resolvePreviewAssetUrl(res.cdnBaseUrl, res.vueEsmKey)
@@ -106,9 +112,33 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
     }
 
     const iframeWin = iframeRef.value?.contentWindow as (Window & typeof globalThis) | null
-    const iframeRuntime = iframeWin?.__RFM_COMPONENTS_VUE__
+    const iframeRuntime = iframeWin?.__RFM_COMPONENTS_VUE__ as
+      | {
+          renderPod: (args: Record<string, unknown>) => void
+          updateProps?: (args: Record<string, unknown>) => void
+          unmount: (args: Record<string, unknown>) => void
+        }
+      | undefined
     if (!iframeRuntime) {
       throw new Error('Runtime not available inside preview iframe.')
+    }
+
+    if (gen !== previewGeneration) {
+      return
+    }
+
+    if (
+      previewPodPrimed
+      && lastRenderedPreviewSlug === slug
+      && typeof iframeRuntime.updateProps === 'function'
+    ) {
+      iframeRuntime.updateProps({
+        mountSelector: RFM_PLAYGROUND_MOUNT_SELECTOR,
+        props,
+        themeVariant,
+        previewMode: true,
+      })
+      return
     }
 
     if (gen !== previewGeneration) {
@@ -120,11 +150,16 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
       mountSelector: RFM_PLAYGROUND_MOUNT_SELECTOR,
       props,
       themeVariant,
+      previewMode: true,
     })
+    previewPodPrimed = true
+    lastRenderedPreviewSlug = slug
   }
 
   function unmountPreview(): void {
     previewGeneration += 1
+    previewPodPrimed = false
+    lastRenderedPreviewSlug = ''
     const iframeWin = iframeRef.value?.contentWindow as (Window & typeof globalThis) | null
     const iframeRuntime = iframeWin?.__RFM_COMPONENTS_VUE__
     if (iframeRuntime) {
