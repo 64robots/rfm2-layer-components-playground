@@ -175,7 +175,7 @@ export function fieldValueAsMultilineString(draft: Record<string, unknown>, fiel
 
 export const MEDIA_REFERENCE_KEYS = new Set(['src', 'url', 'imageUrl', 'thumbnailUrl', 'mediaUuid'])
 export const MULTILINE_FIELD_PATTERN
-  = /(body|instructions|intro|description|note|text|content|transcript|summary|helperText)/i
+  = /(body|instructions|intro|description|note|text|content|transcript|summary|helperText|profile|bio)/i
 
 /** Catalog slugs that use the unified solve-the-case-family contract. */
 export function isSolveTheCaseFamilySlug(slug: string | undefined): boolean {
@@ -932,7 +932,7 @@ function orderedArrayItemPropertyKeys(
     keys = keys.filter((k) => k !== 'id' && !INVESTIGATION_SUSPECT_FORM_HIDDEN_KEYS.has(k))
     return orderKeysWithPreferredHead(
       keys,
-      ['name', 'photoUrl', 'interviewContent', 'guilty'],
+      ['name', 'photoUrl', 'interviewUrl', 'profile', 'guilty'],
       itemProperties,
     )
   }
@@ -994,6 +994,8 @@ function itemTemplateFromProperties(properties: Record<string, JsonSchemaPropert
       row[itemKey] = ''
     } else if (t === 'array') {
       row[itemKey] = []
+    } else if (t === 'object' && prop.properties) {
+      row[itemKey] = itemTemplateFromProperties(prop.properties)
     } else {
       row[itemKey] = ''
     }
@@ -1316,6 +1318,120 @@ function reorderFraudSchemePayloadStandaloneFields(
 /**
  * Emit scalar fields for one payload array-of-objects (and recurse into nested array-of-objects, e.g. solve-the-case question options).
  */
+function emitInvestigationSuspectProfileFields(
+  out: FormField[],
+  profileProp: JsonSchemaProperty,
+  arrayPath: string[],
+  rowIndex: number,
+  section: FormSection,
+  panelId: string,
+  panelTitle: string,
+  panelOrder: number,
+): void {
+  const profileProperties = profileProp.properties
+  if (!profileProperties) {
+    return
+  }
+
+  const profilePanel = {
+    id: `${panelId}.profile`,
+    title: `${panelTitle} - ${profileProp.title || 'Profile'}`,
+    order: panelOrder + 0.1,
+  }
+  const basePath = [...arrayPath, String(rowIndex), 'profile']
+  const orderedProfileKeys = orderKeysWithPreferredHead(
+    Object.keys(profileProperties),
+    ['occupation', 'age', 'status', 'dependents', 'tenure', 'facts', 'bio'],
+    profileProperties,
+  )
+
+  for (const profileKey of orderedProfileKeys) {
+    const nestedProp = profileProperties[profileKey]
+    if (!nestedProp) {
+      continue
+    }
+
+    if (profileKey === 'tenure' && nestedProp.properties) {
+      const tenureBasePath = [...basePath, 'tenure']
+      const tenureKeys = orderKeysWithPreferredHead(
+        Object.keys(nestedProp.properties),
+        ['tenureLabel', 'tenureValue'],
+        nestedProp.properties,
+      )
+      for (const tenureKey of tenureKeys) {
+        const tenureProp = nestedProp.properties[tenureKey]
+        if (!tenureProp) {
+          continue
+        }
+        const tenureType = getSchemaType(tenureProp)
+        if (tenureType !== 'string' && !isNumericSchemaType(tenureProp)) {
+          continue
+        }
+        const tenurePath = [...tenureBasePath, tenureKey]
+        out.push({
+          id: tenurePath.join('.'),
+          label: `${nestedProp.title || 'Tenure'} ${tenureProp.title || humanizeKey(tenureKey)}`,
+          description: tenureProp.description,
+          path: tenurePath,
+          required: false,
+          section,
+          schema: tenureProp,
+          multiline: tenureType === 'string' && MULTILINE_FIELD_PATTERN.test(tenureKey),
+          disabled: false,
+          itemPanel: profilePanel,
+        })
+      }
+      continue
+    }
+
+    const profileType = getSchemaType(nestedProp)
+    const profilePath = [...basePath, profileKey]
+    if (
+      profileType === 'array'
+      && getSchemaType(nestedProp.items) === 'string'
+      && nestedProp.items
+      && !schemaLooksLikeObject(nestedProp.items)
+    ) {
+      out.push({
+        id: profilePath.join('.'),
+        label: nestedProp.title || humanizeKey(profileKey),
+        description: nestedProp.description,
+        path: profilePath,
+        required: false,
+        section,
+        schema: nestedProp,
+        multiline: true,
+        disabled: false,
+        customType: 'string-array-lines',
+        itemPanel: profilePanel,
+      })
+      continue
+    }
+
+    if (
+      profileType !== 'string'
+      && profileType !== 'number'
+      && profileType !== 'boolean'
+      && !Array.isArray(nestedProp.enum)
+    ) {
+      continue
+    }
+
+    out.push({
+      id: profilePath.join('.'),
+      label: nestedProp.title || humanizeKey(profileKey),
+      description: nestedProp.description,
+      path: profilePath,
+      required: false,
+      section,
+      schema: nestedProp,
+      multiline: profileType === 'string' && MULTILINE_FIELD_PATTERN.test(profilePath.join('.')),
+      disabled: false,
+      itemPanel: profilePanel,
+    })
+  }
+}
+
 function emitPayloadArrayObjectFields(
   out: FormField[],
   draft: Record<string, unknown>,
@@ -1421,6 +1537,26 @@ function emitPayloadArrayObjectFields(
       }
 
       const itemType = getSchemaType(itemProp)
+
+      if (
+        isInvestigationActivitySlug(options.componentSlug)
+        && arrayKey === 'suspects'
+        && !parentArrayKey
+        && itemKey === 'profile'
+        && itemType === 'object'
+      ) {
+        emitInvestigationSuspectProfileFields(
+          out,
+          itemProp,
+          arrayPath,
+          i,
+          section,
+          panelId,
+          panelTitle,
+          i,
+        )
+        continue
+      }
 
       if (schemaLooksLikeArray(itemProp) && itemProp.items) {
         const nestedItems = dereferenceSchemaProperty(itemProp.items as JsonSchemaProperty, root)
@@ -1528,6 +1664,11 @@ function emitPayloadArrayObjectFields(
           && arrayKey === 'suspects'
           && itemKey === 'photoUrl'
           && itemType === 'string'
+      const isInvestigationSuspectInterviewUrl
+        = isInvestigationActivitySlug(slug)
+          && arrayKey === 'suspects'
+          && itemKey === 'interviewUrl'
+          && itemType === 'string'
       const isInvestigationQuestionLinkedFileId
         = isInvestigationActivitySlug(slug)
           && arrayKey === 'questions'
@@ -1567,6 +1708,9 @@ function emitPayloadArrayObjectFields(
           : {}),
         ...(isInvestigationSuspectPhotoUrl
           ? { customType: 'media-url' as const, mediaUrlMode: 'image' as const }
+          : {}),
+        ...(isInvestigationSuspectInterviewUrl
+          ? { customType: 'media-url' as const, mediaUrlMode: 'any' as const }
           : {}),
         ...(isFraudTriangleDocumentUrl
           ? { customType: 'media-url' as const, mediaUrlMode: 'any' as const }
