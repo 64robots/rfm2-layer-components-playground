@@ -217,6 +217,70 @@ export function isInvestigationFileFormHiddenKey(
   )
 }
 
+/** `payload.suspects[]` fields stored in the draft but not edited in the lesson form. */
+export const INVESTIGATION_SUSPECT_FORM_HIDDEN_KEYS = new Set([
+  'slug',
+])
+
+export function isInvestigationSuspectFormHiddenKey(
+  componentSlug: string | undefined,
+  arrayKey: string,
+  parentArrayKey: string | undefined,
+  itemKey: string,
+): boolean {
+  return (
+    isInvestigationActivitySlug(componentSlug)
+    && arrayKey === 'suspects'
+    && !parentArrayKey
+    && INVESTIGATION_SUSPECT_FORM_HIDDEN_KEYS.has(itemKey)
+  )
+}
+
+function slugifyPayloadLabel(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+/**
+ * Ensure every `payload.suspects[]` row has a unique slug derived from its name.
+ * Mutates `draft` in place and returns `true` if any row was modified.
+ */
+export function ensureInvestigationSuspectSlugs(draft: Record<string, unknown>): boolean {
+  const suspects = getValueAtPath(draft, ['payload', 'suspects'])
+  if (!Array.isArray(suspects)) {
+    return false
+  }
+
+  let mutated = false
+  const used = new Set<string>()
+
+  for (let i = 0; i < suspects.length; i++) {
+    const row = suspects[i]
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      continue
+    }
+    const record = row as Record<string, unknown>
+    const name = typeof record.name === 'string' ? record.name.trim() : ''
+    const base = slugifyPayloadLabel(name) || `suspect-${i + 1}`
+    let candidate = base
+    let suffix = 2
+    while (used.has(candidate)) {
+      candidate = `${base}-${suffix}`
+      suffix += 1
+    }
+    if (record.slug !== candidate) {
+      record.slug = candidate
+      mutated = true
+    }
+    used.add(candidate)
+  }
+
+  return mutated
+}
+
 /**
  * Ensure every `payload.files[]` row in an investigation draft has a non-empty
  * string `id`. Heals rows that predate the auto-id wiring (or were imported
@@ -747,6 +811,16 @@ function orderedArrayItemPropertyKeys(
     )
   }
 
+  const isInvestigationSuspects = isInvestigationActivitySlug(slug) && arrayKey === 'suspects' && !parentArrayKey
+  if (isInvestigationSuspects) {
+    keys = keys.filter((k) => k !== 'id' && !INVESTIGATION_SUSPECT_FORM_HIDDEN_KEYS.has(k))
+    return orderKeysWithPreferredHead(
+      keys,
+      ['name', 'photoUrl', 'interviewContent', 'guilty'],
+      itemProperties,
+    )
+  }
+
   keys = keys.filter((k) => k !== 'id')
   return orderKeysWithPreferredHead(keys, CANONICAL_FORM_FIELD_KEY_ORDER, itemProperties)
 }
@@ -759,6 +833,12 @@ function panelTitleForArrayRow(
 ): string {
   if (arrayKey === 'suspects') {
     return `Suspect ${index + 1}`
+  }
+  if (arrayKey === 'controls') {
+    return `Control ${index + 1}`
+  }
+  if (arrayKey === 'objectives') {
+    return `Objective ${index + 1}`
   }
   if (arrayKey === 'supportingQuestions') {
     return `Question ${index + 1}`
@@ -803,6 +883,32 @@ function itemTemplateFromProperties(properties: Record<string, JsonSchemaPropert
     }
   }
   return row
+}
+
+function questionBasePathForOptionsArrayPath(arrayPath: string[]): string[] | null {
+  if (
+    arrayPath.length >= 4
+    && arrayPath[arrayPath.length - 1] === 'options'
+    && /^\d+$/.test(String(arrayPath[arrayPath.length - 2]))
+    && arrayPath[arrayPath.length - 3] === 'questions'
+  ) {
+    return arrayPath.slice(0, -1)
+  }
+  return null
+}
+
+function ensureInvestigationTestOfControlsObject(draft: Record<string, unknown>): void {
+  const payload = getValueAtPath(draft, ['payload'])
+  if (!isRecord(payload)) {
+    return
+  }
+  const current = payload.testOfControls
+  if (typeof current === 'string') {
+    payload.testOfControls = {
+      description: current,
+      controls: [],
+    }
+  }
 }
 
 export type BuildFormFieldsOptions = {
@@ -1133,8 +1239,8 @@ function emitPayloadArrayObjectFields(
     && parentArrayKey === 'questions'
     && arrayPath.length >= 4
   ) {
-    const qIdx = arrayPath[arrayPath.length - 2]!
-    const type = getValueAtPath(draft, ['payload', 'questions', qIdx, 'type'])
+    const questionBasePath = questionBasePathForOptionsArrayPath(arrayPath)
+    const type = questionBasePath ? getValueAtPath(draft, [...questionBasePath, 'type']) : undefined
     if (type !== 'multiple-choice') {
       return
     }
@@ -1191,6 +1297,10 @@ function emitPayloadArrayObjectFields(
       }
 
       if (isInvestigationFileFormHiddenKey(options.componentSlug, arrayKey, parentArrayKey, itemKey)) {
+        continue
+      }
+
+      if (isInvestigationSuspectFormHiddenKey(options.componentSlug, arrayKey, parentArrayKey, itemKey)) {
         continue
       }
 
@@ -1374,7 +1484,20 @@ function appendArrayObjectScalarFields(
 
   for (const [key, property] of Object.entries(properties)) {
     const prop = dereferenceSchemaProperty(property, rootPayloadSchema)
+    if (!prop) {
+      continue
+    }
     if (!schemaLooksLikeArray(prop) || !prop.items) {
+      if (schemaLooksLikeObject(prop) && prop.properties) {
+        appendArrayObjectScalarFields(
+          out,
+          draft,
+          prop,
+          section,
+          [...basePath, key],
+          options,
+        )
+      }
       continue
     }
 
@@ -1470,7 +1593,28 @@ export function listPayloadArrayDescriptors(
       continue
     }
     const prop = dereferenceSchemaProperty(property, schema)
+    if (!prop) {
+      continue
+    }
     if (!schemaLooksLikeArray(prop) || !prop.items) {
+      if (schemaLooksLikeObject(prop) && prop.properties) {
+        for (const [nestedKey, nestedProperty] of Object.entries(prop.properties)) {
+          const nestedProp = dereferenceSchemaProperty(nestedProperty, schema)
+          if (!nestedProp || !schemaLooksLikeArray(nestedProp) || !nestedProp.items) {
+            continue
+          }
+          const nestedItems = dereferenceSchemaProperty(nestedProp.items as JsonSchemaProperty, schema)
+          if (!nestedItems || !schemaLooksLikeObject(nestedItems) || !nestedItems.properties) {
+            continue
+          }
+          const desc = getPayloadArrayDescriptorAtPath(compiledContract, ['payload', key, nestedKey], {
+            componentSlug: options?.componentSlug,
+          })
+          if (desc) {
+            out.push(desc)
+          }
+        }
+      }
       continue
     }
     const items = dereferenceSchemaProperty(prop.items as JsonSchemaProperty, schema)
@@ -1571,6 +1715,9 @@ export function appendPayloadArrayItem(
   itemTemplate: Record<string, unknown>,
 ): Record<string, unknown> {
   const next = normalizePropsDraft(draft)
+  if (arrayPath[0] === 'payload' && arrayPath[1] === 'testOfControls') {
+    ensureInvestigationTestOfControlsObject(next)
+  }
   const raw = getValueAtPath(next, arrayPath)
   const arr = Array.isArray(raw) ? [...raw] : []
   const row: Record<string, unknown> = { ...itemTemplate }
@@ -1587,6 +1734,9 @@ export function appendPayloadArrayItem(
     if (arrayPath.length === 2 && arrayPath[1] === 'files') {
       ensureInvestigationFileIds(next)
       ensureInvestigationFilePositions(next)
+    }
+    if (arrayPath.length === 2 && arrayPath[1] === 'suspects') {
+      ensureInvestigationSuspectSlugs(next)
     }
   }
   if (
@@ -1833,6 +1983,9 @@ export function padPayloadArraysFromContract(
   ensureSolveTheCaseFamilyIds(next)
   ensureInvestigationFileIds(next)
   ensureInvestigationFilePositions(next)
+  if (isInvestigationActivitySlug(options?.componentSlug)) {
+    ensureInvestigationSuspectSlugs(next)
+  }
   seedVideoActivityPayloadDefaults(next, options?.componentSlug)
   return next
 }
@@ -1927,14 +2080,13 @@ function walkNestedPayloadArrayDescriptors(
     ) {
       continue
     }
-    if (
-      key === 'options'
+    const isInvestigationQuestionOptions = key === 'options'
       && isInvestigationActivitySlug(componentSlug)
       && pathPrefix.length >= 2
       && pathPrefix[pathPrefix.length - 2] === 'questions'
       && isRecord(obj)
-      && obj.type !== 'multiple-choice'
-    ) {
+
+    if (isInvestigationQuestionOptions && obj.type !== 'multiple-choice') {
       continue
     }
 
@@ -1946,13 +2098,7 @@ function walkNestedPayloadArrayDescriptors(
         && pathPrefix[pathPrefix.length - 2] === 'questions'
         && isRecord(obj)
         && obj.kind !== 'text'
-      const investigationMultipleChoiceOptions =
-        key === 'options'
-        && isInvestigationActivitySlug(componentSlug)
-        && pathPrefix.length >= 2
-        && pathPrefix[pathPrefix.length - 2] === 'questions'
-        && isRecord(obj)
-        && obj.type === 'multiple-choice'
+      const investigationMultipleChoiceOptions = isInvestigationQuestionOptions && obj.type === 'multiple-choice'
 
       let listVal: unknown[] | null = null
       if (Array.isArray(val)) {
@@ -2280,6 +2426,9 @@ export function applyFieldUpdateToDraft(
   value: unknown,
 ): Record<string, unknown> {
   const next = normalizePropsDraft(draft)
+  if (field.path[0] === 'payload' && field.path[1] === 'testOfControls') {
+    ensureInvestigationTestOfControlsObject(next)
+  }
 
   if (field.customType === 'string-array-lines') {
     if (Array.isArray(value)) {
@@ -2375,6 +2524,44 @@ export function applyFieldUpdateToDraft(
     if (!Array.isArray(cur)) {
       setValueAtPath(next, optPath, [])
     }
+  }
+
+  if (
+    p.length >= 8
+    && p[0] === 'payload'
+    && p[1] === 'testOfControls'
+    && p.includes('questions')
+    && /^\d+$/.test(String(p[p.length - 2]))
+    && p[p.length - 1] === 'type'
+    && value !== 'multiple-choice'
+  ) {
+    setValueAtPath(next, [...p.slice(0, -1), 'options'], [])
+  }
+
+  if (
+    p.length >= 8
+    && p[0] === 'payload'
+    && p[1] === 'testOfControls'
+    && p.includes('questions')
+    && /^\d+$/.test(String(p[p.length - 2]))
+    && p[p.length - 1] === 'type'
+    && value === 'multiple-choice'
+  ) {
+    const optPath = [...p.slice(0, -1), 'options']
+    const cur = getValueAtPath(next, optPath)
+    if (!Array.isArray(cur)) {
+      setValueAtPath(next, optPath, [])
+    }
+  }
+
+  if (
+    p.length === 4
+    && p[0] === 'payload'
+    && p[1] === 'suspects'
+    && /^\d+$/.test(String(p[2]))
+    && p[p.length - 1] === 'name'
+  ) {
+    ensureInvestigationSuspectSlugs(next)
   }
 
   return next
