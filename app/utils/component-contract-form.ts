@@ -685,6 +685,28 @@ export function humanizeKey(value: string): string {
     .replace(/^\w/, (letter) => letter.toUpperCase())
 }
 
+const INVESTIGATION_COMPLETION_GATE_LABELS: Record<string, string> = {
+  'all-files': 'All files',
+  'all-files-and-suspects': 'All files and suspects',
+  'all-files-and-questions': 'All files and questions',
+  'all-files-and-test-of-controls': 'All files and Test of Controls',
+  manual: 'Manual',
+}
+
+export function labelForFormEnumField(
+  componentSlug: string | undefined,
+  field: Pick<FormField, 'id'>,
+  value: string,
+): string {
+  if (
+    isInvestigationActivitySlug(componentSlug)
+    && field.id === 'config.completionGate'
+  ) {
+    return INVESTIGATION_COMPLETION_GATE_LABELS[value] ?? humanizeKey(value)
+  }
+  return humanizeKey(value)
+}
+
 export function getSchemaType(schema: JsonSchemaProperty | undefined): string | null {
   if (!schema) {
     return null
