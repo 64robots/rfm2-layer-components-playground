@@ -687,7 +687,7 @@ export function humanizeKey(value: string): string {
 
 const INVESTIGATION_COMPLETION_GATE_LABELS: Record<string, string> = {
   'all-files': 'All files',
-  'all-files-and-suspects': 'All files and suspects',
+  'all-files-and-suspects': 'All files and suspects/interviews',
   'all-files-and-questions': 'All files and questions',
   'all-files-and-test-of-controls': 'All files and Test of Controls',
   manual: 'Manual',
