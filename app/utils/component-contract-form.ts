@@ -90,7 +90,7 @@ export function partitionFieldsByItemPanels(fields: FormField[]): {
   return { standalone, panels }
 }
 
-/** Solve-the-case lesson editor: intro then suspects arrays, then justification / evidence heading / verdict title, then remaining scalars. */
+/** Solve-the-case lesson editor: intro, suspects, justification/evidence, supporting section copy, supporting questions, then remaining scalars. */
 const SOLVE_CASE_PAYLOAD_CHUNK_BEFORE_ARRAYS: readonly string[] = [
   'payload.title',
   'payload.intro',
@@ -103,11 +103,20 @@ const SOLVE_CASE_PAYLOAD_CHUNK_AFTER_ARRAYS_HEAD: readonly string[] = [
   'payload.evidenceHighlights',
 ]
 
+const SOLVE_CASE_PAYLOAD_SUPPORTING_SECTION_FIELDS: readonly string[] = [
+  'payload.supportingSectionTitle',
+  'payload.supportingSectionIntro',
+]
+
 const SOLVE_CASE_PAYLOAD_REST_FIELD_RANK: Record<string, number> = {
-  'payload.supportingSectionTitle': 0,
-  'payload.supportingSectionIntro': 1,
-  'payload.requireJustification': 2,
-  'payload.verdictTitle': 3,
+  'payload.requireJustification': 0,
+  'payload.verdictTitle': 1,
+}
+
+/** Root payload array list paths to render after each standalone-field chunk (solve-the-case only). */
+const SOLVE_CASE_ARRAY_LIST_PATHS_BY_CHUNK: Record<number, readonly string[]> = {
+  0: ['payload.suspects'],
+  2: ['payload.supportingQuestions'],
 }
 
 function rankSolveCaseRestStandaloneField(id: string): number {
@@ -150,6 +159,10 @@ export function standalonePayloadFieldChunksForLessonEditor(
     .map(id => payloadStandaloneFields.find(f => f.id === id))
     .filter((f): f is FormField => Boolean(f))
   afterHead.forEach(f => used.add(f.id))
+  const supportingSection = SOLVE_CASE_PAYLOAD_SUPPORTING_SECTION_FIELDS
+    .map(id => payloadStandaloneFields.find(f => f.id === id))
+    .filter((f): f is FormField => Boolean(f))
+  supportingSection.forEach(f => used.add(f.id))
   const rest = payloadStandaloneFields
     .filter(f => !used.has(f.id))
     .sort(
@@ -157,8 +170,40 @@ export function standalonePayloadFieldChunksForLessonEditor(
         rankSolveCaseRestStandaloneField(a.id) - rankSolveCaseRestStandaloneField(b.id)
         || a.id.localeCompare(b.id),
     )
-  // Always three slots so arrays render after the intro chunk even when `before` is empty.
-  return [before, afterHead, rest]
+  // Four slots: intro, suspects, justification/evidence, supporting section copy, supporting questions, then rest.
+  return [before, afterHead, supportingSection, rest]
+}
+
+/**
+ * Root payload array list paths to render after a standalone-field chunk in the lesson editor.
+ * Solve-the-case splits suspects (after intro) and supporting questions (after supporting section intro).
+ */
+export function payloadArrayListPathsAfterStandaloneChunk(
+  componentSlug: string | undefined,
+  chunkIndex: number,
+  allRootPaths: readonly string[],
+): string[] {
+  if (!isSolveTheCaseFamilySlug(componentSlug)) {
+    return chunkIndex === 0 ? [...allRootPaths] : []
+  }
+  const preferred = SOLVE_CASE_ARRAY_LIST_PATHS_BY_CHUNK[chunkIndex]
+  if (!preferred?.length) {
+    return []
+  }
+  const preferredSet = new Set(preferred)
+  return allRootPaths.filter(path => preferredSet.has(path))
+}
+
+export function shouldRenderPayloadArrayGroupsAfterStandaloneChunk(
+  groupKey: string,
+  componentSlug: string | undefined,
+  chunkIndex: number,
+  allRootPaths: readonly string[],
+): boolean {
+  if (groupKey !== 'payload') {
+    return false
+  }
+  return payloadArrayListPathsAfterStandaloneChunk(componentSlug, chunkIndex, allRootPaths).length > 0
 }
 
 export function fieldValueAsMultilineString(draft: Record<string, unknown>, field: FormField): string {
@@ -683,6 +728,28 @@ export function humanizeKey(value: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^\w/, (letter) => letter.toUpperCase())
+}
+
+const INVESTIGATION_COMPLETION_GATE_LABELS: Record<string, string> = {
+  'all-files': 'All files',
+  'all-files-and-suspects': 'All files and suspects/interviews',
+  'all-files-and-questions': 'All files and questions',
+  'all-files-and-test-of-controls': 'All files and Test of Controls',
+  manual: 'Manual',
+}
+
+export function labelForFormEnumField(
+  componentSlug: string | undefined,
+  field: Pick<FormField, 'id'>,
+  value: string,
+): string {
+  if (
+    isInvestigationActivitySlug(componentSlug)
+    && field.id === 'config.completionGate'
+  ) {
+    return INVESTIGATION_COMPLETION_GATE_LABELS[value] ?? humanizeKey(value)
+  }
+  return humanizeKey(value)
 }
 
 export function getSchemaType(schema: JsonSchemaProperty | undefined): string | null {
