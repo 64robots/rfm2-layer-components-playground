@@ -689,6 +689,11 @@ export function isVideoActivitySlug(slug: string | undefined): boolean {
   return slug === 'video'
 }
 
+/** Red flag review catalog slug (`payload.redFlags[].entries[]`). */
+export function isRedFlagReviewSlug(slug: string | undefined): boolean {
+  return slug === 'red-flag-review'
+}
+
 /** Synopsis catalog slug (`payload.intro` + `sections[]`). */
 export function isSynopsisSlug(slug: string | undefined): boolean {
   return slug === 'synopsis'
@@ -1004,6 +1009,12 @@ function orderedArrayItemPropertyKeys(
     )
   }
 
+  const isRedFlagReviewEntries = isRedFlagReviewSlug(slug) && arrayKey === 'entries' && parentArrayKey === 'redFlags'
+  if (isRedFlagReviewEntries) {
+    keys = keys.filter((k) => k !== 'id' && k !== 'flag')
+    return orderKeysWithPreferredHead(keys, ['file', 'notes', 'severity'], itemProperties)
+  }
+
   keys = keys.filter((k) => k !== 'id')
   return orderKeysWithPreferredHead(keys, CANONICAL_FORM_FIELD_KEY_ORDER, itemProperties)
 }
@@ -1037,6 +1048,12 @@ function panelTitleForArrayRow(
   }
   if (arrayKey === 'attachments') {
     return `Attachment ${index + 1}`
+  }
+  if (arrayKey === 'redFlags') {
+    return `Red flag ${index + 1}`
+  }
+  if (arrayKey === 'entries') {
+    return `Entry ${index + 1}`
   }
   return `${groupTitle} ${index + 1}`
 }
@@ -2314,7 +2331,46 @@ export function padPayloadArraysFromContract(
     ensureInvestigationSuspectSlugs(next)
   }
   seedVideoActivityPayloadDefaults(next, options?.componentSlug)
+  seedRedFlagReviewPayloadDefaults(next, compiledContract, options?.componentSlug)
   return next
+}
+
+function payloadSchemaPropertyDefault(
+  compiledContract: Record<string, unknown> | null | undefined,
+  propertyKey: string,
+): unknown {
+  const payload = compiledContract?.payload as Record<string, unknown> | undefined
+  const schema = payload?.schema as Record<string, unknown> | undefined
+  const properties = schema?.properties as Record<string, JsonSchemaProperty> | undefined
+  return properties?.[propertyKey]?.default
+}
+
+function seedRedFlagReviewPayloadDefaults(
+  next: Record<string, unknown>,
+  compiledContract: Record<string, unknown> | null | undefined,
+  slug: string | undefined,
+): void {
+  if (!isRedFlagReviewSlug(slug)) {
+    return
+  }
+  const payload = getValueAtPath(next, ['payload'])
+  if (!isRecord(payload)) {
+    return
+  }
+
+  const titleDefault = payloadSchemaPropertyDefault(compiledContract, 'title')
+  if (typeof payload.title !== 'string' || !payload.title.trim()) {
+    if (typeof titleDefault === 'string' && titleDefault.trim()) {
+      payload.title = titleDefault
+    }
+  }
+
+  const descriptionDefault = payloadSchemaPropertyDefault(compiledContract, 'description')
+  if (typeof payload.description !== 'string' || !payload.description.trim()) {
+    if (typeof descriptionDefault === 'string' && descriptionDefault.trim()) {
+      payload.description = descriptionDefault
+    }
+  }
 }
 
 function seedVideoActivityPayloadDefaults(next: Record<string, unknown>, slug: string | undefined): void {
