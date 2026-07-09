@@ -743,16 +743,137 @@ const INVESTIGATION_COMPLETION_GATE_LABELS: Record<string, string> = {
   manual: 'Manual',
 }
 
+const INVESTIGATION_EVIDENCE_COMPANION_LABELS: Record<string, string> = {
+  suspects: 'Suspects / interviews',
+  questions: 'Questions',
+  'test-of-controls': 'Test of Controls',
+}
+
+export type InvestigationEvidenceCompanion = 'suspects' | 'questions' | 'test-of-controls'
+
+const INVESTIGATION_EVIDENCE_COMPANION_VALUES: InvestigationEvidenceCompanion[] = [
+  'suspects',
+  'questions',
+  'test-of-controls',
+]
+
+const INVESTIGATION_COMPLETION_GATES_BY_COMPANION: Record<
+  InvestigationEvidenceCompanion,
+  readonly string[]
+> = {
+  suspects: ['all-files', 'all-files-and-suspects', 'manual'],
+  questions: ['all-files', 'all-files-and-questions', 'manual'],
+  'test-of-controls': ['all-files', 'all-files-and-test-of-controls', 'manual'],
+}
+
+function hasInvestigationTestOfControlsContent(raw: unknown): boolean {
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    return true
+  }
+  if (!isRecord(raw)) {
+    return false
+  }
+  if (typeof raw.description === 'string' && raw.description.trim() !== '') {
+    return true
+  }
+  return Array.isArray(raw.controls) && raw.controls.length > 0
+}
+
+/** Infer Evidence Companion from existing payload when config.evidenceCompanion is missing. */
+export function inferInvestigationEvidenceCompanion(
+  draft: Record<string, unknown> | null | undefined,
+): InvestigationEvidenceCompanion {
+  const payload = isRecord(draft?.payload) ? draft.payload as Record<string, unknown> : {}
+  if (Array.isArray(payload.suspects) && payload.suspects.length > 0) {
+    return 'suspects'
+  }
+  if (Array.isArray(payload.questions) && payload.questions.length > 0) {
+    return 'questions'
+  }
+  if (hasInvestigationTestOfControlsContent(payload.testOfControls)) {
+    return 'test-of-controls'
+  }
+  return 'suspects'
+}
+
+export function resolveInvestigationEvidenceCompanion(
+  draft: Record<string, unknown> | null | undefined,
+): InvestigationEvidenceCompanion {
+  const config = isRecord(draft?.config) ? draft.config as Record<string, unknown> : {}
+  const raw = config.evidenceCompanion
+  if (typeof raw === 'string' && (INVESTIGATION_EVIDENCE_COMPANION_VALUES as string[]).includes(raw)) {
+    return raw as InvestigationEvidenceCompanion
+  }
+  return inferInvestigationEvidenceCompanion(draft)
+}
+
+/** Ensure config.evidenceCompanion is set (infer from payload when absent). Does not clear companion data. */
+export function ensureInvestigationEvidenceCompanion(
+  draft: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = normalizePropsDraft(draft)
+  const config = isRecord(next.config) ? { ...(next.config as Record<string, unknown>) } : {}
+  const raw = config.evidenceCompanion
+  if (typeof raw === 'string' && (INVESTIGATION_EVIDENCE_COMPANION_VALUES as string[]).includes(raw)) {
+    return next
+  }
+  config.evidenceCompanion = inferInvestigationEvidenceCompanion(next)
+  next.config = config
+  return next
+}
+
+export function completionGatesForInvestigationEvidenceCompanion(
+  companion: InvestigationEvidenceCompanion,
+): readonly string[] {
+  return INVESTIGATION_COMPLETION_GATES_BY_COMPANION[companion]
+}
+
+/**
+ * Filter investigation root array list paths so only Evidence + the selected companion panels show.
+ * Tasks and Sidebar Tabs are hidden from the form. Never mutates draft data — visibility only.
+ */
+export function filterInvestigationRootPayloadArrayListPaths(
+  listPaths: string[],
+  companion: InvestigationEvidenceCompanion,
+): string[] {
+  const alwaysHiddenPaths = new Set<string>([
+    'payload.tasks',
+    'payload.sidebarTabs',
+  ])
+  const companionPaths = new Set<string>([
+    'payload.suspects',
+    'payload.questions',
+    'payload.testOfControls.controls',
+  ])
+  const allowedForCompanion: Record<InvestigationEvidenceCompanion, Set<string>> = {
+    suspects: new Set(['payload.suspects']),
+    questions: new Set(['payload.questions']),
+    'test-of-controls': new Set(['payload.testOfControls.controls']),
+  }
+  const allowed = allowedForCompanion[companion]
+  return listPaths.filter((path) => {
+    if (alwaysHiddenPaths.has(path)) {
+      return false
+    }
+    if (!companionPaths.has(path)) {
+      return true
+    }
+    return allowed.has(path)
+  })
+}
+
 export function labelForFormEnumField(
   componentSlug: string | undefined,
   field: Pick<FormField, 'id'>,
   value: string,
 ): string {
-  if (
-    isInvestigationActivitySlug(componentSlug)
-    && field.id === 'config.completionGate'
-  ) {
-    return INVESTIGATION_COMPLETION_GATE_LABELS[value] ?? humanizeKey(value)
+  if (isInvestigationActivitySlug(componentSlug)) {
+    if (field.id === 'config.completionGate') {
+      return INVESTIGATION_COMPLETION_GATE_LABELS[value] ?? humanizeKey(value)
+    }
+    if (field.id === 'config.evidenceCompanion') {
+      return INVESTIGATION_EVIDENCE_COMPANION_LABELS[value] ?? humanizeKey(value)
+    }
   }
   return humanizeKey(value)
 }
@@ -1887,8 +2008,30 @@ export function buildFormFieldsFromCompiledContract(
   reorderFraudTrianglePayloadStandaloneFields(fields, options)
   reorderFraudSchemePayloadStandaloneFields(fields, options)
   omitLegacyFraudTrianglePayloadFormFields(fields, options)
+  restrictInvestigationCompletionGateOptions(fields, normalizedDraft, options)
 
   return fields
+}
+
+/** Limit completionGate enum options to those that match the selected Evidence Companion. */
+function restrictInvestigationCompletionGateOptions(
+  fields: FormField[],
+  draft: Record<string, unknown>,
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isInvestigationActivitySlug(options.componentSlug)) {
+    return
+  }
+  const companion = resolveInvestigationEvidenceCompanion(draft)
+  const allowed = new Set(completionGatesForInvestigationEvidenceCompanion(companion))
+  const field = fields.find(f => f.id === 'config.completionGate')
+  if (!field || !Array.isArray(field.schema.enum)) {
+    return
+  }
+  field.schema = {
+    ...field.schema,
+    enum: field.schema.enum.filter(value => allowed.has(String(value))),
+  }
 }
 
 export function buildFormFieldsFromDetail(
