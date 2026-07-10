@@ -1087,10 +1087,10 @@ function orderedArrayItemPropertyKeys(
 
   const isFraudTriangleDocuments = slug === 'fraud-triangle' && arrayKey === 'documents' && !parentArrayKey
   if (isFraudTriangleDocuments) {
-    keys = keys.filter(k => k !== 'id' && k !== 'mimeType')
+    keys = keys.filter(k => k !== 'id' && k !== 'mimeType' && k !== 'pagePreviews')
     return orderKeysWithPreferredHead(
       keys,
-      ['title', 'url', 'alt', 'pageCount', 'openLabel', 'pdfDisplayMode', 'pageTabs'],
+      ['displayType', 'title', 'url', 'alt', 'pageCount', 'openLabel', 'pdfDisplayMode', 'pageTabs'],
       itemProperties,
     )
   }
@@ -1193,6 +1193,8 @@ function itemTemplateFromProperties(properties: Record<string, JsonSchemaPropert
       row[itemKey] = [...prop.default]
     } else if (t === 'string' && typeof prop.default === 'string') {
       row[itemKey] = prop.default
+    } else if (t === 'string' && Array.isArray(prop.enum) && typeof prop.enum[0] === 'string') {
+      row[itemKey] = prop.enum[0]
     } else if (t === 'boolean') {
       row[itemKey] = false
     } else if (isNumericSchemaType(prop)) {
@@ -1418,7 +1420,7 @@ const FRAUD_TRIANGLE_PAYLOAD_FIELD_ORDER: readonly string[] = [
 
 /**
  * Legacy payload keys normalized into `documents[]` at runtime; hide duplicate editors in the builder.
- * Keeps `payload.title`, `payload.description`, `payload.documents`, `payload.pillars`, and `config`.
+ * Keeps `payload.title`, `payload.description`, `payload.documents`, `payload.questions`, `payload.pillars`, and `config`.
  */
 const FRAUD_TRIANGLE_LEGACY_PAYLOAD_ROOT_KEYS = new Set([
   'scenario',
@@ -1430,6 +1432,53 @@ const FRAUD_TRIANGLE_LEGACY_PAYLOAD_ROOT_KEYS = new Set([
   'images',
   'pdfs',
 ])
+
+/**
+ * Hide document-mode-specific fields without clearing draft values.
+ * document-only → hide pageTabs; tab-document → hide openLabel + pdfDisplayMode.
+ */
+function omitFraudTriangleInactiveDocumentModeFields(
+  fields: FormField[],
+  draft: Record<string, unknown>,
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isFraudTriangleSlug(options.componentSlug)) {
+    return
+  }
+
+  const documents = Array.isArray((draft.payload as Record<string, unknown> | undefined)?.documents)
+    ? ((draft.payload as Record<string, unknown>).documents as unknown[])
+    : []
+
+  const next = fields.filter((field) => {
+    if (field.section !== 'payload') {
+      return true
+    }
+    const path = field.path
+    // payload.documents.N.openLabel | pdfDisplayMode | pageTabs...
+    if (path.length < 4 || path[0] !== 'payload' || path[1] !== 'documents') {
+      return true
+    }
+    const index = Number(path[2])
+    if (!Number.isInteger(index) || index < 0) {
+      return true
+    }
+    const row = documents[index]
+    const displayType = row && typeof row === 'object' && !Array.isArray(row)
+      ? String((row as Record<string, unknown>).displayType ?? 'document-only')
+      : 'document-only'
+    const fieldKey = path[3]
+
+    if (displayType === 'tab-document') {
+      return fieldKey !== 'openLabel' && fieldKey !== 'pdfDisplayMode'
+    }
+    // document-only: hide page tab editors
+    return fieldKey !== 'pageTabs'
+  })
+
+  fields.length = 0
+  fields.push(...next)
+}
 
 function omitLegacyFraudTrianglePayloadFormFields(
   fields: FormField[],
@@ -1671,6 +1720,26 @@ function emitPayloadArrayObjectFields(
     }
   }
   if (
+    isFraudTriangleSlug(options.componentSlug)
+    && arrayKey === 'options'
+    && parentArrayKey === 'questions'
+    && arrayPath.length >= 4
+  ) {
+    const qIdx = arrayPath[arrayPath.length - 2]!
+    const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+    if (kind === 'text') {
+      return
+    }
+  }
+  // Page tabs use a dedicated thumbnail editor in the lesson form — skip scalar row fields.
+  if (
+    isFraudTriangleSlug(options.componentSlug)
+    && arrayKey === 'pageTabs'
+    && parentArrayKey === 'documents'
+  ) {
+    return
+  }
+  if (
     isInvestigationActivitySlug(options.componentSlug)
     && arrayKey === 'options'
     && parentArrayKey === 'questions'
@@ -1894,6 +1963,11 @@ function emitPayloadArrayObjectFields(
           && arrayKey === 'documents'
           && itemKey === 'pageCount'
           && itemType === 'number'
+      const isFraudTrianglePageTabPageReadOnly
+        = isFraudTriangleSlug(slug)
+          && arrayKey === 'pageTabs'
+          && itemKey === 'page'
+          && itemType === 'number'
 
       out.push({
         id: nextPath.join('.'),
@@ -1905,7 +1979,9 @@ function emitPayloadArrayObjectFields(
         schema: itemProp,
         multiline: itemType === 'string' && MULTILINE_FIELD_PATTERN.test(itemKey),
         disabled: MEDIA_REFERENCE_KEYS.has(itemKey) && !isInvestigationEvidenceUrl && !isFraudTriangleDocumentUrl,
-        ...(isFraudTriangleDocumentPageCountReadOnly ? { readOnly: true as const } : {}),
+        ...(isFraudTriangleDocumentPageCountReadOnly || isFraudTrianglePageTabPageReadOnly
+          ? { readOnly: true as const }
+          : {}),
         itemPanel: { id: panelId, title: panelTitle, order: i },
         ...(useSchemeCorrectRadio ? { customType: 'scheme-correct-radio' as const } : {}),
         ...(isInvestigationEvidenceUrl
@@ -2008,6 +2084,7 @@ export function buildFormFieldsFromCompiledContract(
   reorderFraudTrianglePayloadStandaloneFields(fields, options)
   reorderFraudSchemePayloadStandaloneFields(fields, options)
   omitLegacyFraudTrianglePayloadFormFields(fields, options)
+  omitFraudTriangleInactiveDocumentModeFields(fields, normalizedDraft, options)
   restrictInvestigationCompletionGateOptions(fields, normalizedDraft, options)
 
   return fields
