@@ -145,6 +145,21 @@ const FRAUD_TRIANGLE_ARRAY_LIST_PATHS_BY_CHUNK: Record<number, readonly string[]
   1: ['payload.questions'],
 }
 
+/** Match activity: title + instructions, then questions, then feedback fields. */
+const MATCH_ACTIVITY_PAYLOAD_CHUNK_BEFORE_QUESTIONS: readonly string[] = [
+  'payload.title',
+  'payload.instructions',
+]
+
+const MATCH_ACTIVITY_PAYLOAD_CHUNK_AFTER_QUESTIONS: readonly string[] = [
+  'payload.correctFeedback',
+  'payload.incorrectFeedback',
+]
+
+const MATCH_ACTIVITY_ARRAY_LIST_PATHS_BY_CHUNK: Record<number, readonly string[]> = {
+  0: ['payload.questions'],
+}
+
 /**
  * Split payload standalone fields for the lesson activity editor so top-level object arrays (suspects, etc.)
  * can be rendered between intro copy and later scalars.
@@ -153,6 +168,19 @@ export function standalonePayloadFieldChunksForLessonEditor(
   payloadStandaloneFields: FormField[],
   componentSlug: string | undefined,
 ): FormField[][] {
+  if (componentSlug === 'match-activity') {
+    const before = MATCH_ACTIVITY_PAYLOAD_CHUNK_BEFORE_QUESTIONS
+      .map(id => payloadStandaloneFields.find(f => f.id === id))
+      .filter((f): f is FormField => Boolean(f))
+    const after = MATCH_ACTIVITY_PAYLOAD_CHUNK_AFTER_QUESTIONS
+      .map(id => payloadStandaloneFields.find(f => f.id === id))
+      .filter((f): f is FormField => Boolean(f))
+    const used = new Set([...before, ...after].map(f => f.id))
+    const rest = payloadStandaloneFields.filter(f => !used.has(f.id))
+    // title/instructions → questions array → feedback (+ any remaining scalars)
+    return [before, [...after, ...rest]]
+  }
+
   if (isFraudTriangleSlug(componentSlug)) {
     const beforeDocuments = FRAUD_TRIANGLE_PAYLOAD_CHUNK_BEFORE_DOCUMENTS
       .map(id => payloadStandaloneFields.find(f => f.id === id))
@@ -211,6 +239,14 @@ export function payloadArrayListPathsAfterStandaloneChunk(
   chunkIndex: number,
   allRootPaths: readonly string[],
 ): string[] {
+  if (componentSlug === 'match-activity') {
+    const preferred = MATCH_ACTIVITY_ARRAY_LIST_PATHS_BY_CHUNK[chunkIndex]
+    if (!preferred?.length) {
+      return []
+    }
+    const preferredSet = new Set(preferred)
+    return allRootPaths.filter(path => preferredSet.has(path))
+  }
   if (isFraudTriangleSlug(componentSlug)) {
     const preferred = FRAUD_TRIANGLE_ARRAY_LIST_PATHS_BY_CHUNK[chunkIndex]
     if (!preferred?.length) {
@@ -1134,6 +1170,12 @@ function orderedArrayItemPropertyKeys(
   if (isVideoActivitySlug(slug) && arrayKey === 'attachments' && !parentArrayKey) {
     keys = keys.filter((k) => k !== 'id')
     return orderKeysWithPreferredHead(keys, ['label', 'file'], itemProperties)
+  }
+
+  const isMatchActivityQuestions = slug === 'match-activity' && arrayKey === 'questions' && !parentArrayKey
+  if (isMatchActivityQuestions) {
+    keys = keys.filter((k) => k !== 'id' && k !== 'feedback')
+    return orderKeysWithPreferredHead(keys, ['prompt', 'answer'], itemProperties)
   }
 
   const isInvestigationFiles = isInvestigationActivitySlug(slug) && arrayKey === 'files' && !parentArrayKey
@@ -2138,9 +2180,28 @@ export function buildFormFieldsFromCompiledContract(
   reorderFraudSchemePayloadStandaloneFields(fields, options)
   omitLegacyFraudTrianglePayloadFormFields(fields, options)
   omitFraudTriangleInactiveDocumentModeFields(fields, normalizedDraft, options)
+  omitMatchActivityHiddenPayloadFormFields(fields, options)
   restrictInvestigationCompletionGateOptions(fields, normalizedDraft, options)
 
   return fields
+}
+
+function omitMatchActivityHiddenPayloadFormFields(
+  fields: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (options.componentSlug !== 'match-activity') {
+    return
+  }
+  const next = fields.filter((field) => {
+    if (field.section !== 'payload') {
+      return true
+    }
+    // Author-controlled via drag in lesson editor preview; not a form field.
+    return field.id !== 'payload.answerOrder'
+  })
+  fields.length = 0
+  fields.push(...next)
 }
 
 /** Limit completionGate enum options to those that match the selected Evidence Companion. */
