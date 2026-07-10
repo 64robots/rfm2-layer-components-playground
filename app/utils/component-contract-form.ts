@@ -130,6 +130,21 @@ const FRAUD_SCHEME_PAYLOAD_CHUNK_BEFORE_ARRAYS: readonly string[] = [
   'payload.prompt',
 ]
 
+/** Fraud triangle lesson editor: intro → documents, then questions instructions → questions. */
+const FRAUD_TRIANGLE_PAYLOAD_CHUNK_BEFORE_DOCUMENTS: readonly string[] = [
+  'payload.title',
+  'payload.description',
+]
+
+const FRAUD_TRIANGLE_PAYLOAD_CHUNK_BEFORE_QUESTIONS: readonly string[] = [
+  'payload.questionsInstructions',
+]
+
+const FRAUD_TRIANGLE_ARRAY_LIST_PATHS_BY_CHUNK: Record<number, readonly string[]> = {
+  0: ['payload.documents'],
+  1: ['payload.questions'],
+}
+
 /**
  * Split payload standalone fields for the lesson activity editor so top-level object arrays (suspects, etc.)
  * can be rendered between intro copy and later scalars.
@@ -138,6 +153,18 @@ export function standalonePayloadFieldChunksForLessonEditor(
   payloadStandaloneFields: FormField[],
   componentSlug: string | undefined,
 ): FormField[][] {
+  if (isFraudTriangleSlug(componentSlug)) {
+    const beforeDocuments = FRAUD_TRIANGLE_PAYLOAD_CHUNK_BEFORE_DOCUMENTS
+      .map(id => payloadStandaloneFields.find(f => f.id === id))
+      .filter((f): f is FormField => Boolean(f))
+    const beforeQuestions = FRAUD_TRIANGLE_PAYLOAD_CHUNK_BEFORE_QUESTIONS
+      .map(id => payloadStandaloneFields.find(f => f.id === id))
+      .filter((f): f is FormField => Boolean(f))
+    const used = new Set([...beforeDocuments, ...beforeQuestions].map(f => f.id))
+    const rest = payloadStandaloneFields.filter(f => !used.has(f.id))
+    return [beforeDocuments, beforeQuestions, rest]
+  }
+
   if (isFraudSchemeFamilySlug(componentSlug)) {
     const before = FRAUD_SCHEME_PAYLOAD_CHUNK_BEFORE_ARRAYS
       .map(id => payloadStandaloneFields.find(f => f.id === id))
@@ -177,12 +204,21 @@ export function standalonePayloadFieldChunksForLessonEditor(
 /**
  * Root payload array list paths to render after a standalone-field chunk in the lesson editor.
  * Solve-the-case splits suspects (after intro) and supporting questions (after supporting section intro).
+ * Fraud-triangle splits documents (after intro) and questions (after questions instructions).
  */
 export function payloadArrayListPathsAfterStandaloneChunk(
   componentSlug: string | undefined,
   chunkIndex: number,
   allRootPaths: readonly string[],
 ): string[] {
+  if (isFraudTriangleSlug(componentSlug)) {
+    const preferred = FRAUD_TRIANGLE_ARRAY_LIST_PATHS_BY_CHUNK[chunkIndex]
+    if (!preferred?.length) {
+      return []
+    }
+    const preferredSet = new Set(preferred)
+    return allRootPaths.filter(path => preferredSet.has(path))
+  }
   if (!isSolveTheCaseFamilySlug(componentSlug)) {
     return chunkIndex === 0 ? [...allRootPaths] : []
   }
@@ -1412,15 +1448,17 @@ function reorderIntroContentCardPayloadStandaloneFields(
   out.push(...payloadStandalone, ...payloadPanel, ...rest)
 }
 
-/** Title before body copy; `description` is labeled “Body” in the contract. */
+/** Title before body copy; questions instructions before the questions list. */
 const FRAUD_TRIANGLE_PAYLOAD_FIELD_ORDER: readonly string[] = [
   'payload.title',
   'payload.description',
+  'payload.questionsInstructions',
 ]
 
 /**
  * Legacy payload keys normalized into `documents[]` at runtime; hide duplicate editors in the builder.
- * Keeps `payload.title`, `payload.description`, `payload.documents`, `payload.questions`, `payload.pillars`, and `config`.
+ * Keeps `payload.title`, `payload.description`, `payload.documents`, `payload.questions`,
+ * `payload.questionsInstructions`, and `config`. Pillars stay in the contract but are hidden from the form.
  */
 const FRAUD_TRIANGLE_LEGACY_PAYLOAD_ROOT_KEYS = new Set([
   'scenario',
@@ -1431,6 +1469,13 @@ const FRAUD_TRIANGLE_LEGACY_PAYLOAD_ROOT_KEYS = new Set([
   'tabPdf',
   'images',
   'pdfs',
+])
+
+/** Root payload arrays kept out of the lesson form (still valid in saved payloads). */
+const FRAUD_TRIANGLE_HIDDEN_FORM_ARRAY_KEYS = new Set([
+  'images',
+  'pdfs',
+  'pillars',
 ])
 
 /**
@@ -1496,6 +1541,9 @@ function omitLegacyFraudTrianglePayloadFormFields(
       return true
     }
     const rootKey = p[1]!
+    if (rootKey === 'pillars') {
+      return false
+    }
     if (p.length === 2 && FRAUD_TRIANGLE_LEGACY_PAYLOAD_ROOT_KEYS.has(rootKey)) {
       return false
     }
@@ -2147,13 +2195,13 @@ export function listPayloadArrayDescriptors(
 
   const topRequired = Array.isArray(schema.required) ? schema.required : []
   const out: PayloadArrayDescriptor[] = []
-  const skipFraudLegacyArrays
+  const skipFraudHiddenArrays
     = isFraudTriangleSlug(options?.componentSlug)
-      ? new Set(['images', 'pdfs'])
+      ? FRAUD_TRIANGLE_HIDDEN_FORM_ARRAY_KEYS
       : null
 
   for (const [key, property] of Object.entries(properties)) {
-    if (skipFraudLegacyArrays?.has(key)) {
+    if (skipFraudHiddenArrays?.has(key)) {
       continue
     }
     const prop = dereferenceSchemaProperty(property, schema)
