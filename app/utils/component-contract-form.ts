@@ -160,6 +160,27 @@ const MATCH_ACTIVITY_ARRAY_LIST_PATHS_BY_CHUNK: Record<number, readonly string[]
   0: ['payload.questions'],
 }
 
+const BIAS_RANKING_PAYLOAD_CHUNK_BEFORE_SOURCES: readonly string[] = [
+  'payload.title',
+  'payload.instructions',
+  'payload.helpText',
+]
+
+const BIAS_RANKING_PAYLOAD_CHUNK_BEFORE_STATEMENTS: readonly string[] = [
+  'payload.lowImpactLabel',
+  'payload.highImpactLabel',
+]
+
+const BIAS_RANKING_PAYLOAD_CHUNK_AFTER_STATEMENTS: readonly string[] = [
+  'payload.questionsInstructions',
+]
+
+const BIAS_RANKING_ARRAY_LIST_PATHS_BY_CHUNK: Record<number, readonly string[]> = {
+  0: ['payload.sources'],
+  1: ['payload.statements'],
+  2: ['payload.questions'],
+}
+
 /**
  * Split payload standalone fields for the lesson activity editor so top-level object arrays (suspects, etc.)
  * can be rendered between intro copy and later scalars.
@@ -179,6 +200,22 @@ export function standalonePayloadFieldChunksForLessonEditor(
     const rest = payloadStandaloneFields.filter(f => !used.has(f.id))
     // title/instructions → questions array → feedback (+ any remaining scalars)
     return [before, [...after, ...rest]]
+  }
+
+  if (componentSlug === 'bias-ranking') {
+    const beforeSources = BIAS_RANKING_PAYLOAD_CHUNK_BEFORE_SOURCES
+      .map(id => payloadStandaloneFields.find(f => f.id === id))
+      .filter((f): f is FormField => Boolean(f))
+    const beforeStatements = BIAS_RANKING_PAYLOAD_CHUNK_BEFORE_STATEMENTS
+      .map(id => payloadStandaloneFields.find(f => f.id === id))
+      .filter((f): f is FormField => Boolean(f))
+    const afterStatements = BIAS_RANKING_PAYLOAD_CHUNK_AFTER_STATEMENTS
+      .map(id => payloadStandaloneFields.find(f => f.id === id))
+      .filter((f): f is FormField => Boolean(f))
+    const used = new Set([...beforeSources, ...beforeStatements, ...afterStatements].map(f => f.id))
+    const rest = payloadStandaloneFields.filter(f => !used.has(f.id))
+    // title/instructions/help → sources → labels → statements → reflection (+ rest)
+    return [beforeSources, beforeStatements, [...afterStatements, ...rest]]
   }
 
   if (isFraudTriangleSlug(componentSlug)) {
@@ -241,6 +278,14 @@ export function payloadArrayListPathsAfterStandaloneChunk(
 ): string[] {
   if (componentSlug === 'match-activity') {
     const preferred = MATCH_ACTIVITY_ARRAY_LIST_PATHS_BY_CHUNK[chunkIndex]
+    if (!preferred?.length) {
+      return []
+    }
+    const preferredSet = new Set(preferred)
+    return allRootPaths.filter(path => preferredSet.has(path))
+  }
+  if (componentSlug === 'bias-ranking') {
+    const preferred = BIAS_RANKING_ARRAY_LIST_PATHS_BY_CHUNK[chunkIndex]
     if (!preferred?.length) {
       return []
     }
@@ -756,6 +801,10 @@ export function isFraudTriangleSlug(slug: string | undefined): boolean {
   return slug === 'fraud-triangle'
 }
 
+export function isBiasRankingSlug(slug: string | undefined): boolean {
+  return slug === 'bias-ranking'
+}
+
 /** Video activity (`payload.video`, `payload.poster`, `payload.attachments[].file`). */
 export function isVideoActivitySlug(slug: string | undefined): boolean {
   return slug === 'video'
@@ -934,6 +983,19 @@ export function filterInvestigationRootPayloadArrayListPaths(
   })
 }
 
+const BIAS_RANKING_SOURCE_COLOR_LABELS: Record<string, string> = {
+  '#E11D48': 'Red',
+  '#F97316': 'Orange',
+  '#86EFAC': 'Light green',
+  '#7DD3FC': 'Light blue',
+  '#EAB308': 'Yellow',
+  '#A855F7': 'Purple',
+  '#EC4899': 'Pink',
+  '#14B8A6': 'Teal',
+  '#6366F1': 'Indigo',
+  '#64748B': 'Slate',
+}
+
 export function labelForFormEnumField(
   componentSlug: string | undefined,
   field: Pick<FormField, 'id'>,
@@ -946,6 +1008,9 @@ export function labelForFormEnumField(
     if (field.id === 'config.evidenceCompanion') {
       return INVESTIGATION_EVIDENCE_COMPANION_LABELS[value] ?? humanizeKey(value)
     }
+  }
+  if (isBiasRankingSlug(componentSlug) && /^payload\.sources\.\d+\.color$/.test(field.id)) {
+    return BIAS_RANKING_SOURCE_COLOR_LABELS[value] ?? value
   }
   return humanizeKey(value)
 }
@@ -1176,6 +1241,18 @@ function orderedArrayItemPropertyKeys(
   if (isMatchActivityQuestions) {
     keys = keys.filter((k) => k !== 'id' && k !== 'feedback')
     return orderKeysWithPreferredHead(keys, ['prompt', 'answer'], itemProperties)
+  }
+
+  const isBiasRankingSources = slug === 'bias-ranking' && arrayKey === 'sources' && !parentArrayKey
+  if (isBiasRankingSources) {
+    keys = keys.filter((k) => k !== 'id')
+    return orderKeysWithPreferredHead(keys, ['name', 'color'], itemProperties)
+  }
+
+  const isBiasRankingStatements = slug === 'bias-ranking' && arrayKey === 'statements' && !parentArrayKey
+  if (isBiasRankingStatements) {
+    keys = keys.filter((k) => k !== 'id' && k !== 'exampleRanks')
+    return orderKeysWithPreferredHead(keys, ['text', 'isExample'], itemProperties)
   }
 
   const isInvestigationFiles = isInvestigationActivitySlug(slug) && arrayKey === 'files' && !parentArrayKey
@@ -1821,6 +1898,18 @@ function emitPayloadArrayObjectFields(
       return
     }
   }
+  if (
+    isBiasRankingSlug(options.componentSlug)
+    && arrayKey === 'options'
+    && parentArrayKey === 'questions'
+    && arrayPath.length >= 4
+  ) {
+    const qIdx = arrayPath[arrayPath.length - 2]!
+    const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+    if (kind === 'text') {
+      return
+    }
+  }
   // Page tabs use a dedicated thumbnail editor in the lesson form — skip scalar row fields.
   if (
     isFraudTriangleSlug(options.componentSlug)
@@ -1999,7 +2088,7 @@ function emitPayloadArrayObjectFields(
         arrayKey === 'options'
         && parentArrayKey === 'questions'
         && arrayPath.length >= 4
-        && (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug))
+        && (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug))
       ) {
         const qIdx = arrayPath[arrayPath.length - 2]!
         const k = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
@@ -2014,7 +2103,7 @@ function emitPayloadArrayObjectFields(
           || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'suspects' && !parentArrayKey)
           || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'supportingQuestions')
           || (
-            (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug))
+            (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug))
             && arrayKey === 'options'
             && parentArrayKey === 'questions'
             && exclusiveCorrectQuestionKind === 'single_select'
@@ -2181,6 +2270,7 @@ export function buildFormFieldsFromCompiledContract(
   omitLegacyFraudTrianglePayloadFormFields(fields, options)
   omitFraudTriangleInactiveDocumentModeFields(fields, normalizedDraft, options)
   omitMatchActivityHiddenPayloadFormFields(fields, options)
+  omitBiasRankingHiddenPayloadFormFields(fields, options)
   restrictInvestigationCompletionGateOptions(fields, normalizedDraft, options)
 
   return fields
@@ -2199,6 +2289,24 @@ function omitMatchActivityHiddenPayloadFormFields(
     }
     // Author-controlled via drag in lesson editor preview; not a form field.
     return field.id !== 'payload.answerOrder'
+  })
+  fields.length = 0
+  fields.push(...next)
+}
+
+function omitBiasRankingHiddenPayloadFormFields(
+  fields: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (options.componentSlug !== 'bias-ranking') {
+    return
+  }
+  const next = fields.filter((field) => {
+    if (field.section !== 'payload') {
+      return true
+    }
+    // exampleRanks is a sourceId→number map; seeded from fixture / defaults when isExample.
+    return !/^payload\.statements\.\d+\.exampleRanks/.test(field.id)
   })
   fields.length = 0
   fields.push(...next)
@@ -2789,7 +2897,7 @@ function walkNestedPayloadArrayDescriptors(
 
     if (
       key === 'options'
-      && isQuizFamilySlug(componentSlug)
+      && (isQuizFamilySlug(componentSlug) || isFraudTriangleSlug(componentSlug) || isBiasRankingSlug(componentSlug))
       && pathPrefix.length >= 2
       && pathPrefix[pathPrefix.length - 2] === 'questions'
       && isRecord(obj)
