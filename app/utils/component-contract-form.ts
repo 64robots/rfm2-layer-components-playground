@@ -1952,16 +1952,16 @@ function emitPayloadArrayObjectFields(
       const fieldLabel = itemProp.title || humanizeKey(itemKey)
 
       const slug = options.componentSlug || ''
-      let quizQuestionKind: string | undefined
+      let exclusiveCorrectQuestionKind: string | undefined
       if (
-        isQuizFamilySlug(slug)
-        && arrayKey === 'options'
+        arrayKey === 'options'
         && parentArrayKey === 'questions'
         && arrayPath.length >= 4
+        && (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug))
       ) {
         const qIdx = arrayPath[arrayPath.length - 2]!
         const k = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
-        quizQuestionKind = typeof k === 'string' ? k : undefined
+        exclusiveCorrectQuestionKind = typeof k === 'string' ? k : undefined
       }
 
       const useSchemeCorrectRadio =
@@ -1971,7 +1971,12 @@ function emitPayloadArrayObjectFields(
           ((slug === 'fraud-scheme-family' || slug === 'fraud-scheme') && arrayKey === 'schemes' && !parentArrayKey)
           || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'suspects' && !parentArrayKey)
           || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'supportingQuestions')
-          || (isQuizFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'questions' && quizQuestionKind === 'single_select')
+          || (
+            (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug))
+            && arrayKey === 'options'
+            && parentArrayKey === 'questions'
+            && exclusiveCorrectQuestionKind === 'single_select'
+          )
         )
 
       const fieldRequired = itemRequired.includes(itemKey)
@@ -3148,6 +3153,24 @@ export function applyFieldUpdateToDraft(
     const cur = getValueAtPath(next, optPath)
     if (!Array.isArray(cur)) {
       setValueAtPath(next, optPath, [])
+    } else if (value === 'single_select') {
+      // Keep at most one correct option when switching to single-select.
+      let keptCorrect = false
+      const normalized = cur.map((row) => {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) {
+          return row
+        }
+        const option = row as Record<string, unknown>
+        if (!option.isCorrect) {
+          return option
+        }
+        if (keptCorrect) {
+          return { ...option, isCorrect: false }
+        }
+        keptCorrect = true
+        return option
+      })
+      setValueAtPath(next, optPath, normalized)
     }
   }
 
