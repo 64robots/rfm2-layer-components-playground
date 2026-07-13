@@ -2112,17 +2112,27 @@ function emitPayloadArrayObjectFields(
       }
 
       const useSchemeCorrectRadio =
-        itemKey === 'isCorrect'
-        && itemType === 'boolean'
+        itemType === 'boolean'
         && (
-          ((slug === 'fraud-scheme-family' || slug === 'fraud-scheme') && arrayKey === 'schemes' && !parentArrayKey)
-          || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'suspects' && !parentArrayKey)
-          || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'supportingQuestions')
+          (
+            itemKey === 'isCorrect'
+            && (
+              ((slug === 'fraud-scheme-family' || slug === 'fraud-scheme') && arrayKey === 'schemes' && !parentArrayKey)
+              || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'suspects' && !parentArrayKey)
+              || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'supportingQuestions')
+              || (
+                (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug) || isInvestigationConsolidationSlug(slug))
+                && arrayKey === 'options'
+                && parentArrayKey === 'questions'
+                && exclusiveCorrectQuestionKind === 'single_select'
+              )
+            )
+          )
           || (
-            (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug) || isInvestigationConsolidationSlug(slug))
-            && arrayKey === 'options'
-            && parentArrayKey === 'questions'
-            && exclusiveCorrectQuestionKind === 'single_select'
+            itemKey === 'guilty'
+            && isInvestigationActivitySlug(slug)
+            && arrayKey === 'suspects'
+            && !parentArrayKey
           )
         )
 
@@ -3248,22 +3258,30 @@ export function normalizePropsDraft(value: Record<string, unknown> | null | unde
   return next
 }
 
-/** Path to the object array whose rows expose `isCorrect` (e.g. `payload.schemes` or `payload.suspects`). */
-export function exclusiveCorrectArrayPathForField(field: FormField): string[] | null {
+/** Exclusive boolean keys supported by scheme-correct-radio rows. */
+const EXCLUSIVE_BOOLEAN_ROW_KEYS = new Set(['isCorrect', 'guilty'])
+
+function exclusiveBooleanKeyFromField(field: FormField): string | null {
   if (field.customType !== 'scheme-correct-radio') {
     return null
   }
-  const path = field.path
-  if (path.length < 2 || path[path.length - 1] !== 'isCorrect') {
-    return null
-  }
-  return path.slice(0, -2)
+  const key = field.path[field.path.length - 1]
+  return typeof key === 'string' && EXCLUSIVE_BOOLEAN_ROW_KEYS.has(key) ? key : null
 }
 
-/** First row index with `isCorrect: true` in that array, or -1. */
+/** Path to the object array whose rows expose an exclusive boolean (e.g. `isCorrect` or `guilty`). */
+export function exclusiveCorrectArrayPathForField(field: FormField): string[] | null {
+  if (!exclusiveBooleanKeyFromField(field)) {
+    return null
+  }
+  return field.path.slice(0, -2)
+}
+
+/** First row index with the exclusive boolean key set true in that array, or -1. */
 export function selectedExclusiveCorrectRowIndex(
   draft: Record<string, unknown>,
   arrayPath: string[],
+  exclusiveKey: string = 'isCorrect',
 ): number {
   const rows = getValueAtPath(draft, arrayPath)
   if (!Array.isArray(rows)) {
@@ -3271,7 +3289,7 @@ export function selectedExclusiveCorrectRowIndex(
   }
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
-    if (row && typeof row === 'object' && Boolean((row as Record<string, unknown>).isCorrect)) {
+    if (row && typeof row === 'object' && Boolean((row as Record<string, unknown>)[exclusiveKey])) {
       return i
     }
   }
@@ -3279,15 +3297,16 @@ export function selectedExclusiveCorrectRowIndex(
 }
 
 export function isExclusiveCorrectRadioChecked(draft: Record<string, unknown>, field: FormField): boolean {
+  const exclusiveKey = exclusiveBooleanKeyFromField(field)
   const arrayPath = exclusiveCorrectArrayPathForField(field)
-  if (!arrayPath) {
+  if (!exclusiveKey || !arrayPath) {
     return false
   }
   const idx = Number.parseInt(String(field.path[field.path.length - 2]), 10)
   if (Number.isNaN(idx)) {
     return false
   }
-  return selectedExclusiveCorrectRowIndex(draft, arrayPath) === idx
+  return selectedExclusiveCorrectRowIndex(draft, arrayPath, exclusiveKey) === idx
 }
 
 /** @deprecated Use selectedExclusiveCorrectRowIndex(draft, ['payload','schemes']). */
@@ -3328,7 +3347,8 @@ export function applyFieldUpdateToDraft(
 
   if (field.customType === 'scheme-correct-radio') {
     const path = field.path
-    if (value && path.length >= 2 && path[path.length - 1] === 'isCorrect') {
+    const exclusiveKey = exclusiveBooleanKeyFromField(field)
+    if (value && exclusiveKey && path.length >= 2) {
       const rowIdx = Number.parseInt(String(path[path.length - 2]), 10)
       const arrayPath = path.slice(0, -2)
       if (!Number.isNaN(rowIdx) && arrayPath[0] === 'payload') {
@@ -3338,7 +3358,7 @@ export function applyFieldUpdateToDraft(
             if (!row || typeof row !== 'object') {
               return row
             }
-            return { ...(row as Record<string, unknown>), isCorrect: i === rowIdx }
+            return { ...(row as Record<string, unknown>), [exclusiveKey]: i === rowIdx }
           })
           setValueAtPath(next, arrayPath, updated)
         }
