@@ -40,7 +40,7 @@ export type FormField = {
   disabled: boolean
   /** Editable but not writable (e.g. derived page count); avoids “managed source” disabled styling. */
   readOnly?: boolean
-  customType?: 'media-asset' | 'scheme-correct-radio' | 'media-url' | 'string-array-lines' | 'investigation-linked-file-select'
+  customType?: 'media-asset' | 'scheme-correct-radio' | 'media-url' | 'string-array-lines' | 'investigation-linked-file-select' | 'investigation-source-activity-select'
   /**
    * When `customType` is `media-url`, limits the media library and file picker.
    * `any` = images, videos, documents; `image` = images only (e.g. suspect headshots);
@@ -803,6 +803,10 @@ export function isFraudTriangleSlug(slug: string | undefined): boolean {
 
 export function isBiasRankingSlug(slug: string | undefined): boolean {
   return slug === 'bias-ranking'
+}
+
+export function isInvestigationConsolidationSlug(slug: string | undefined): boolean {
+  return slug === 'investigation-consolidation'
 }
 
 /** Video activity (`payload.video`, `payload.poster`, `payload.attachments[].file`). */
@@ -1910,6 +1914,18 @@ function emitPayloadArrayObjectFields(
       return
     }
   }
+  if (
+    isInvestigationConsolidationSlug(options.componentSlug)
+    && arrayKey === 'options'
+    && parentArrayKey === 'questions'
+    && arrayPath.length >= 4
+  ) {
+    const questionBasePath = questionBasePathForOptionsArrayPath(arrayPath)
+    const kind = questionBasePath ? getValueAtPath(draft, [...questionBasePath, 'kind']) : undefined
+    if (kind === 'text') {
+      return
+    }
+  }
   // Page tabs use a dedicated thumbnail editor in the lesson form — skip scalar row fields.
   if (
     isFraudTriangleSlug(options.componentSlug)
@@ -2088,10 +2104,10 @@ function emitPayloadArrayObjectFields(
         arrayKey === 'options'
         && parentArrayKey === 'questions'
         && arrayPath.length >= 4
-        && (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug))
+        && (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug) || isInvestigationConsolidationSlug(slug))
       ) {
-        const qIdx = arrayPath[arrayPath.length - 2]!
-        const k = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+        const questionBasePath = questionBasePathForOptionsArrayPath(arrayPath)
+        const k = questionBasePath ? getValueAtPath(draft, [...questionBasePath, 'kind']) : undefined
         exclusiveCorrectQuestionKind = typeof k === 'string' ? k : undefined
       }
 
@@ -2103,7 +2119,7 @@ function emitPayloadArrayObjectFields(
           || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'suspects' && !parentArrayKey)
           || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'supportingQuestions')
           || (
-            (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug))
+            (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug) || isInvestigationConsolidationSlug(slug))
             && arrayKey === 'options'
             && parentArrayKey === 'questions'
             && exclusiveCorrectQuestionKind === 'single_select'
@@ -2271,6 +2287,8 @@ export function buildFormFieldsFromCompiledContract(
   omitFraudTriangleInactiveDocumentModeFields(fields, normalizedDraft, options)
   omitMatchActivityHiddenPayloadFormFields(fields, options)
   omitBiasRankingHiddenPayloadFormFields(fields, options)
+  omitInvestigationConsolidationHiddenPayloadFormFields(fields, options)
+  annotateInvestigationConsolidationSourceActivityField(fields, options)
   restrictInvestigationCompletionGateOptions(fields, normalizedDraft, options)
 
   return fields
@@ -2310,6 +2328,39 @@ function omitBiasRankingHiddenPayloadFormFields(
   })
   fields.length = 0
   fields.push(...next)
+}
+
+function omitInvestigationConsolidationHiddenPayloadFormFields(
+  fields: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isInvestigationConsolidationSlug(options.componentSlug)) {
+    return
+  }
+  const next = fields.filter((field) => {
+    if (field.section !== 'payload') {
+      return true
+    }
+    // Runtime/preview fallback; authored via linked source investigation.
+    return field.id !== 'payload.sourceSnapshot'
+      && !field.id.startsWith('payload.sourceSnapshot.')
+  })
+  fields.length = 0
+  fields.push(...next)
+}
+
+function annotateInvestigationConsolidationSourceActivityField(
+  fields: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isInvestigationConsolidationSlug(options.componentSlug)) {
+    return
+  }
+  const field = fields.find((item) => item.id === 'config.sourceActivityUuid')
+  if (!field) {
+    return
+  }
+  field.customType = 'investigation-source-activity-select'
 }
 
 /** Limit completionGate enum options to those that match the selected Evidence Companion. */
@@ -2897,7 +2948,7 @@ function walkNestedPayloadArrayDescriptors(
 
     if (
       key === 'options'
-      && (isQuizFamilySlug(componentSlug) || isFraudTriangleSlug(componentSlug) || isBiasRankingSlug(componentSlug))
+      && (isQuizFamilySlug(componentSlug) || isFraudTriangleSlug(componentSlug) || isBiasRankingSlug(componentSlug) || isInvestigationConsolidationSlug(componentSlug))
       && pathPrefix.length >= 2
       && pathPrefix[pathPrefix.length - 2] === 'questions'
       && isRecord(obj)
@@ -2923,12 +2974,19 @@ function walkNestedPayloadArrayDescriptors(
         && pathPrefix[pathPrefix.length - 2] === 'questions'
         && isRecord(obj)
         && obj.kind !== 'text'
+      const sharedQuestionNonTextOptions =
+        key === 'options'
+        && (isFraudTriangleSlug(componentSlug) || isBiasRankingSlug(componentSlug) || isInvestigationConsolidationSlug(componentSlug))
+        && pathPrefix.length >= 2
+        && pathPrefix[pathPrefix.length - 2] === 'questions'
+        && isRecord(obj)
+        && obj.kind !== 'text'
       const investigationMultipleChoiceOptions = isInvestigationQuestionOptions && obj.type === 'multiple-choice'
 
       let listVal: unknown[] | null = null
       if (Array.isArray(val)) {
         listVal = val
-      } else if ((quizQuestionNonTextOptions || investigationMultipleChoiceOptions) && (val === undefined || val === null)) {
+      } else if ((quizQuestionNonTextOptions || sharedQuestionNonTextOptions || investigationMultipleChoiceOptions) && (val === undefined || val === null)) {
         listVal = []
       }
 
@@ -3299,25 +3357,17 @@ export function applyFieldUpdateToDraft(
   }
 
   const p = field.path
-  if (
-    p.length >= 4
-    && p[0] === 'payload'
-    && p[1] === 'questions'
-    && /^\d+$/.test(String(p[2]))
+  const isQuestionKindPath = p[0] === 'payload'
+    && p.length >= 4
     && p[p.length - 1] === 'kind'
-    && value === 'text'
-  ) {
+    && /^\d+$/.test(String(p[p.length - 2]))
+    && p[p.length - 3] === 'questions'
+
+  if (isQuestionKindPath && value === 'text') {
     setValueAtPath(next, [...p.slice(0, -1), 'options'], [])
   }
 
-  if (
-    p.length >= 4
-    && p[0] === 'payload'
-    && p[1] === 'questions'
-    && /^\d+$/.test(String(p[2]))
-    && p[p.length - 1] === 'kind'
-    && (value === 'single_select' || value === 'multi_select')
-  ) {
+  if (isQuestionKindPath && (value === 'single_select' || value === 'multi_select')) {
     const optPath = [...p.slice(0, -1), 'options']
     const cur = getValueAtPath(next, optPath)
     if (!Array.isArray(cur)) {
