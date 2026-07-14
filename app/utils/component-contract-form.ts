@@ -1866,7 +1866,9 @@ function emitInvestigationSuspectProfileFields(
       required: false,
       section,
       schema: nestedProp,
-      multiline: profileType === 'string' && MULTILINE_FIELD_PATTERN.test(profilePath.join('.')),
+      // Test the field key only — full paths include `profile`, which would force every
+      // profile scalar into a textarea via MULTILINE_FIELD_PATTERN.
+      multiline: profileType === 'string' && MULTILINE_FIELD_PATTERN.test(profileKey),
       disabled: false,
       itemPanel: profilePanel,
     })
