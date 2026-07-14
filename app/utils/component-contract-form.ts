@@ -2519,7 +2519,7 @@ function omitInvestigationSuspectConditionalFormFields(
   fields.push(...next)
 }
 
-/** Put Mode then Suspect content first among investigation config fields. */
+/** Put Mode, then Allow accessible version, then Suspect content among investigation config fields. */
 function reorderInvestigationConfigFormFields(
   fields: FormField[],
   options: BuildFormFieldsOptions,
@@ -2528,7 +2528,11 @@ function reorderInvestigationConfigFormFields(
     return
   }
 
-  const preferredConfigIds = ['config.mode', 'config.suspectContentType'] as const
+  const preferredConfigIds = [
+    'config.mode',
+    'config.allowAccessibleVersion',
+    'config.suspectContentType',
+  ] as const
   const preferredSet = new Set<string>(preferredConfigIds)
   const nonConfig = fields.filter((field) => field.section !== 'config')
   const configFields = fields.filter((field) => field.section === 'config')
