@@ -874,6 +874,11 @@ const INVESTIGATION_EVIDENCE_COMPANION_LABELS: Record<string, string> = {
   'test-of-controls': 'Test of Controls',
 }
 
+const SOLVE_THE_CASE_SUSPECTS_SOURCE_LABELS: Record<string, string> = {
+  manual: 'Manual',
+  linked: 'Linked Investigation',
+}
+
 export type InvestigationEvidenceCompanion = 'suspects' | 'questions' | 'test-of-controls'
 
 const INVESTIGATION_EVIDENCE_COMPANION_VALUES: InvestigationEvidenceCompanion[] = [
@@ -1012,6 +1017,9 @@ export function labelForFormEnumField(
     if (field.id === 'config.evidenceCompanion') {
       return INVESTIGATION_EVIDENCE_COMPANION_LABELS[value] ?? humanizeKey(value)
     }
+  }
+  if (isSolveTheCaseFamilySlug(componentSlug) && field.id === 'config.suspectsSource') {
+    return SOLVE_THE_CASE_SUSPECTS_SOURCE_LABELS[value] ?? humanizeKey(value)
   }
   if (isBiasRankingSlug(componentSlug) && /^payload\.sources\.\d+\.color$/.test(field.id)) {
     return BIAS_RANKING_SOURCE_COLOR_LABELS[value] ?? value
@@ -1220,7 +1228,7 @@ function orderedArrayItemPropertyKeys(
     return orderKeysWithPreferredHead(keys, ['label', 'description', 'isCorrect'], itemProperties)
   }
   if (isSolveSuspects) {
-    return orderKeysWithPreferredHead(keys, ['name', 'summary', 'isCorrect'], itemProperties)
+    return orderKeysWithPreferredHead(keys, ['name', 'summary', 'guilty'], itemProperties)
   }
   if (isSolveQuestionOptions) {
     return orderKeysWithPreferredHead(keys, ['label', 'description', 'isCorrect'], itemProperties)
@@ -2118,7 +2126,6 @@ function emitPayloadArrayObjectFields(
             itemKey === 'isCorrect'
             && (
               ((slug === 'fraud-scheme-family' || slug === 'fraud-scheme') && arrayKey === 'schemes' && !parentArrayKey)
-              || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'suspects' && !parentArrayKey)
               || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'supportingQuestions')
               || (
                 (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug) || isInvestigationConsolidationSlug(slug))
@@ -2130,9 +2137,9 @@ function emitPayloadArrayObjectFields(
           )
           || (
             itemKey === 'guilty'
-            && isInvestigationActivitySlug(slug)
             && arrayKey === 'suspects'
             && !parentArrayKey
+            && (isInvestigationActivitySlug(slug) || isSolveTheCaseFamilySlug(slug))
           )
         )
 
@@ -2299,6 +2306,8 @@ export function buildFormFieldsFromCompiledContract(
   omitBiasRankingHiddenPayloadFormFields(fields, options)
   omitInvestigationConsolidationHiddenPayloadFormFields(fields, options)
   annotateInvestigationConsolidationSourceActivityField(fields, options)
+  omitSolveTheCaseConditionalFormFields(fields, normalizedDraft, options)
+  annotateSolveTheCaseSourceActivityField(fields, options)
   restrictInvestigationCompletionGateOptions(fields, normalizedDraft, options)
 
   return fields
@@ -2371,6 +2380,59 @@ function annotateInvestigationConsolidationSourceActivityField(
     return
   }
   field.customType = 'investigation-source-activity-select'
+}
+
+function resolveSolveTheCaseSuspectsSource(draft: Record<string, unknown>): 'manual' | 'linked' {
+  const config = draft.config
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    return 'manual'
+  }
+  return (config as Record<string, unknown>).suspectsSource === 'linked' ? 'linked' : 'manual'
+}
+
+function omitSolveTheCaseConditionalFormFields(
+  fields: FormField[],
+  draft: Record<string, unknown>,
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isSolveTheCaseFamilySlug(options.componentSlug)) {
+    return
+  }
+  const suspectsSource = resolveSolveTheCaseSuspectsSource(draft)
+  const next = fields.filter((field) => {
+    if (suspectsSource === 'linked') {
+      return field.id !== 'payload.suspects'
+        && !field.id.startsWith('payload.suspects.')
+    }
+    return field.id !== 'config.sourceActivityUuid'
+  })
+  fields.length = 0
+  fields.push(...next)
+}
+
+function annotateSolveTheCaseSourceActivityField(
+  fields: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isSolveTheCaseFamilySlug(options.componentSlug)) {
+    return
+  }
+  const field = fields.find((item) => item.id === 'config.sourceActivityUuid')
+  if (!field) {
+    return
+  }
+  field.customType = 'investigation-source-activity-select'
+}
+
+/** Hide manual suspects list when Solve the Case is linked to an investigation. */
+export function filterSolveTheCaseRootPayloadArrayListPaths(
+  listPaths: string[],
+  draft: Record<string, unknown>,
+): string[] {
+  if (resolveSolveTheCaseSuspectsSource(draft) !== 'linked') {
+    return listPaths
+  }
+  return listPaths.filter((path) => path !== 'payload.suspects')
 }
 
 /** Limit completionGate enum options to those that match the selected Evidence Companion. */
