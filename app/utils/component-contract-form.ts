@@ -879,6 +879,11 @@ const SOLVE_THE_CASE_SUSPECTS_SOURCE_LABELS: Record<string, string> = {
   linked: 'Linked Investigation',
 }
 
+const INVESTIGATION_SUSPECT_CONTENT_TYPE_LABELS: Record<string, string> = {
+  profile: 'Profile',
+  interview: 'Interview',
+}
+
 export type InvestigationEvidenceCompanion = 'suspects' | 'questions' | 'test-of-controls'
 
 const INVESTIGATION_EVIDENCE_COMPANION_VALUES: InvestigationEvidenceCompanion[] = [
@@ -1016,6 +1021,9 @@ export function labelForFormEnumField(
     }
     if (field.id === 'config.evidenceCompanion') {
       return INVESTIGATION_EVIDENCE_COMPANION_LABELS[value] ?? humanizeKey(value)
+    }
+    if (field.id === 'config.suspectContentType') {
+      return INVESTIGATION_SUSPECT_CONTENT_TYPE_LABELS[value] ?? humanizeKey(value)
     }
   }
   if (isSolveTheCaseFamilySlug(componentSlug) && field.id === 'config.suspectsSource') {
@@ -2306,6 +2314,8 @@ export function buildFormFieldsFromCompiledContract(
   omitBiasRankingHiddenPayloadFormFields(fields, options)
   omitInvestigationConsolidationHiddenPayloadFormFields(fields, options)
   annotateInvestigationConsolidationSourceActivityField(fields, options)
+  omitInvestigationSuspectConditionalFormFields(fields, normalizedDraft, options)
+  reorderInvestigationConfigFormFields(fields, options)
   omitSolveTheCaseConditionalFormFields(fields, normalizedDraft, options)
   annotateSolveTheCaseSourceActivityField(fields, options)
   restrictInvestigationCompletionGateOptions(fields, normalizedDraft, options)
@@ -2433,6 +2443,100 @@ export function filterSolveTheCaseRootPayloadArrayListPaths(
     return listPaths
   }
   return listPaths.filter((path) => path !== 'payload.suspects')
+}
+
+function resolveInvestigationSuspectContentTypeFromDraft(draft: Record<string, unknown>): 'profile' | 'interview' {
+  const config = draft.config
+  const payload = draft.payload
+  const suspects = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).suspects
+    : undefined
+  const configRecord = config && typeof config === 'object' && !Array.isArray(config)
+    ? config as Record<string, unknown>
+    : undefined
+
+  if (configRecord?.suspectContentType === 'profile' || configRecord?.suspectContentType === 'interview') {
+    return configRecord.suspectContentType
+  }
+
+  if (Array.isArray(suspects)) {
+    for (const row of suspects) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        continue
+      }
+      const suspect = row as Record<string, unknown>
+      if (suspect.contentType === 'interview') {
+        return 'interview'
+      }
+      const interviewUrl = typeof suspect.interviewUrl === 'string' ? suspect.interviewUrl.trim() : ''
+      const legacy = typeof suspect.legacyInterviewContent === 'string' ? suspect.legacyInterviewContent.trim() : ''
+      if (interviewUrl || legacy) {
+        return 'interview'
+      }
+    }
+  }
+  return 'profile'
+}
+
+/** Hide interview or profile fields for all suspects based on config.suspectContentType. */
+function omitInvestigationSuspectConditionalFormFields(
+  fields: FormField[],
+  draft: Record<string, unknown>,
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isInvestigationActivitySlug(options.componentSlug)) {
+    return
+  }
+  const companion = resolveInvestigationEvidenceCompanion(draft)
+  const contentType = resolveInvestigationSuspectContentTypeFromDraft(draft)
+
+  const next = fields.filter((field) => {
+    if (field.id === 'config.suspectContentType') {
+      return companion === 'suspects'
+    }
+    const match = field.id.match(/^payload\.suspects\.\d+(?:\.(.+))?$/)
+    if (!match) {
+      return true
+    }
+    const rest = match[1] ?? ''
+    if (contentType === 'profile') {
+      return rest !== 'interviewUrl'
+    }
+    return rest !== 'profile' && !rest.startsWith('profile.')
+  })
+
+  if (contentType === 'interview') {
+    for (const field of next) {
+      if (/^payload\.suspects\.\d+\.interviewUrl$/.test(field.id)) {
+        field.required = true
+      }
+    }
+  }
+
+  fields.length = 0
+  fields.push(...next)
+}
+
+/** Put Mode then Suspect content first among investigation config fields. */
+function reorderInvestigationConfigFormFields(
+  fields: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isInvestigationActivitySlug(options.componentSlug)) {
+    return
+  }
+
+  const preferredConfigIds = ['config.mode', 'config.suspectContentType'] as const
+  const preferredSet = new Set<string>(preferredConfigIds)
+  const nonConfig = fields.filter((field) => field.section !== 'config')
+  const configFields = fields.filter((field) => field.section === 'config')
+  const head = preferredConfigIds
+    .map((id) => configFields.find((field) => field.id === id))
+    .filter((field): field is FormField => Boolean(field))
+  const tail = configFields.filter((field) => !preferredSet.has(field.id))
+
+  fields.length = 0
+  fields.push(...nonConfig, ...head, ...tail)
 }
 
 /** Limit completionGate enum options to those that match the selected Evidence Companion. */
