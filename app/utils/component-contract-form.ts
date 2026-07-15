@@ -1587,10 +1587,11 @@ function reorderIntroContentCardPayloadStandaloneFields(
   out.push(...payloadStandalone, ...payloadPanel, ...rest)
 }
 
-/** Title before body copy; questions instructions before the questions list. */
+/** Title before body copy; accessible text after body; questions instructions before the questions list. */
 const FRAUD_TRIANGLE_PAYLOAD_FIELD_ORDER: readonly string[] = [
   'payload.title',
   'payload.description',
+  'payload.accessibleText',
   'payload.questionsInstructions',
 ]
 
@@ -1726,6 +1727,28 @@ function reorderFraudTrianglePayloadStandaloneFields(
 
   out.length = 0
   out.push(...payloadStandalone, ...payloadPanel, ...rest)
+}
+
+/** Put Allow accessible version first among fraud-triangle config fields. */
+function reorderFraudTriangleConfigFormFields(
+  fields: FormField[],
+  options: BuildFormFieldsOptions,
+): void {
+  if (!isFraudTriangleSlug(options.componentSlug)) {
+    return
+  }
+
+  const preferredConfigIds = ['config.allowAccessibleVersion'] as const
+  const preferredSet = new Set<string>(preferredConfigIds)
+  const nonConfig = fields.filter((field) => field.section !== 'config')
+  const configFields = fields.filter((field) => field.section === 'config')
+  const head = preferredConfigIds
+    .map((id) => configFields.find((field) => field.id === id))
+    .filter((field): field is FormField => Boolean(field))
+  const tail = configFields.filter((field) => !preferredSet.has(field.id))
+
+  fields.length = 0
+  fields.push(...nonConfig, ...head, ...tail)
 }
 
 function reorderFraudSchemePayloadStandaloneFields(
@@ -2318,6 +2341,7 @@ export function buildFormFieldsFromCompiledContract(
   annotateInvestigationConsolidationSourceActivityField(fields, options)
   omitInvestigationSuspectConditionalFormFields(fields, normalizedDraft, options)
   reorderInvestigationConfigFormFields(fields, options)
+  reorderFraudTriangleConfigFormFields(fields, options)
   omitSolveTheCaseConditionalFormFields(fields, normalizedDraft, options)
   annotateSolveTheCaseSourceActivityField(fields, options)
   restrictInvestigationCompletionGateOptions(fields, normalizedDraft, options)
