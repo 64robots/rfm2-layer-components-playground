@@ -762,6 +762,16 @@ export function isQuizFamilySlug(slug: string | undefined): boolean {
   )
 }
 
+/** Bias ranking catalog slug (`payload.statements[]` + sources). */
+export function isBiasRankingSlug(slug: string | undefined): boolean {
+  return slug === 'bias-ranking'
+}
+
+/** Investigation consolidation catalog slug (`payload.questionSets[]`). */
+export function isInvestigationConsolidationSlug(slug: string | undefined): boolean {
+  return slug === 'investigation-consolidation'
+}
+
 export function humanizeKey(value: string): string {
   return value
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
@@ -896,6 +906,22 @@ export function filterInvestigationRootPayloadArrayListPaths(
     }
     return allowed.has(path)
   })
+}
+
+/**
+ * Hide manual `payload.suspects` list panels when solve-the-case pulls suspects
+ * from a linked investigation. Never mutates draft data — visibility only.
+ */
+export function filterSolveTheCaseRootPayloadArrayListPaths(
+  listPaths: string[],
+  draft: Record<string, unknown>,
+): string[] {
+  const config = isRecord(draft.config) ? draft.config : {}
+  if (config.suspectsSource !== 'linked') {
+    return listPaths
+  }
+
+  return listPaths.filter(path => path !== 'payload.suspects')
 }
 
 export function labelForFormEnumField(
