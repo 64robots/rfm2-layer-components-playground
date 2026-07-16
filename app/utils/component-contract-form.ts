@@ -40,7 +40,7 @@ export type FormField = {
   disabled: boolean
   /** Editable but not writable (e.g. derived page count); avoids “managed source” disabled styling. */
   readOnly?: boolean
-  customType?: 'media-asset' | 'scheme-correct-radio' | 'media-url' | 'string-array-lines' | 'investigation-linked-file-select' | 'investigation-source-activity-select'
+  customType?: 'media-asset' | 'scheme-correct-radio' | 'media-url' | 'string-array-lines' | 'investigation-linked-file-select' | 'investigation-source-activity-select' | 'course-completion-exam-select'
   /**
    * When `customType` is `media-url`, limits the media library and file picker.
    * `any` = images, videos, documents; `image` = images only (e.g. suspect headshots);
