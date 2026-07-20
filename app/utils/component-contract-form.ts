@@ -863,8 +863,6 @@ export function humanizeKey(value: string): string {
 const INVESTIGATION_COMPLETION_GATE_LABELS: Record<string, string> = {
   'all-files': 'All files',
   'all-files-and-suspects': 'All files and suspects/interviews',
-  'all-files-and-questions': 'All files and questions',
-  'all-files-and-test-of-controls': 'All files and Test of Controls',
   manual: 'Manual',
 }
 
@@ -897,8 +895,9 @@ const INVESTIGATION_COMPLETION_GATES_BY_COMPANION: Record<
   readonly string[]
 > = {
   suspects: ['all-files', 'all-files-and-suspects', 'manual'],
-  questions: ['all-files', 'all-files-and-questions', 'manual'],
-  'test-of-controls': ['all-files', 'all-files-and-test-of-controls', 'manual'],
+  // Questions / TOC answers are optional and never part of the completion gate.
+  questions: ['all-files', 'manual'],
+  'test-of-controls': ['all-files', 'manual'],
 }
 
 function hasInvestigationTestOfControlsContent(raw: unknown): boolean {
@@ -1982,8 +1981,8 @@ function emitPayloadArrayObjectFields(
     && arrayPath.length >= 4
   ) {
     const questionBasePath = questionBasePathForOptionsArrayPath(arrayPath)
-    const type = questionBasePath ? getValueAtPath(draft, [...questionBasePath, 'type']) : undefined
-    if (type !== 'multiple-choice') {
+    const kind = questionBasePath ? getValueAtPath(draft, [...questionBasePath, 'kind']) : undefined
+    if (kind === 'text') {
       return
     }
   }
@@ -2145,7 +2144,13 @@ function emitPayloadArrayObjectFields(
         arrayKey === 'options'
         && parentArrayKey === 'questions'
         && arrayPath.length >= 4
-        && (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug) || isInvestigationConsolidationSlug(slug))
+        && (
+          isQuizFamilySlug(slug)
+          || isFraudTriangleSlug(slug)
+          || isBiasRankingSlug(slug)
+          || isInvestigationConsolidationSlug(slug)
+          || isInvestigationActivitySlug(slug)
+        )
       ) {
         const questionBasePath = questionBasePathForOptionsArrayPath(arrayPath)
         const k = questionBasePath ? getValueAtPath(draft, [...questionBasePath, 'kind']) : undefined
@@ -2161,7 +2166,13 @@ function emitPayloadArrayObjectFields(
               ((slug === 'fraud-scheme-family' || slug === 'fraud-scheme') && arrayKey === 'schemes' && !parentArrayKey)
               || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'supportingQuestions')
               || (
-                (isQuizFamilySlug(slug) || isFraudTriangleSlug(slug) || isBiasRankingSlug(slug) || isInvestigationConsolidationSlug(slug))
+                (
+                  isQuizFamilySlug(slug)
+                  || isFraudTriangleSlug(slug)
+                  || isBiasRankingSlug(slug)
+                  || isInvestigationConsolidationSlug(slug)
+                  || isInvestigationActivitySlug(slug)
+                )
                 && arrayKey === 'options'
                 && parentArrayKey === 'questions'
                 && exclusiveCorrectQuestionKind === 'single_select'
@@ -3168,7 +3179,7 @@ function walkNestedPayloadArrayDescriptors(
       && pathPrefix[pathPrefix.length - 2] === 'questions'
       && isRecord(obj)
 
-    if (isInvestigationQuestionOptions && obj.type !== 'multiple-choice') {
+    if (isInvestigationQuestionOptions && obj.kind === 'text') {
       continue
     }
 
@@ -3187,12 +3198,12 @@ function walkNestedPayloadArrayDescriptors(
         && pathPrefix[pathPrefix.length - 2] === 'questions'
         && isRecord(obj)
         && obj.kind !== 'text'
-      const investigationMultipleChoiceOptions = isInvestigationQuestionOptions && obj.type === 'multiple-choice'
+      const investigationSelectOptions = isInvestigationQuestionOptions && obj.kind !== 'text'
 
       let listVal: unknown[] | null = null
       if (Array.isArray(val)) {
         listVal = val
-      } else if ((quizQuestionNonTextOptions || sharedQuestionNonTextOptions || investigationMultipleChoiceOptions) && (val === undefined || val === null)) {
+      } else if ((quizQuestionNonTextOptions || sharedQuestionNonTextOptions || investigationSelectOptions) && (val === undefined || val === null)) {
         listVal = []
       }
 
@@ -3606,60 +3617,6 @@ export function applyFieldUpdateToDraft(
         return option
       })
       setValueAtPath(next, optPath, normalized)
-    }
-  }
-
-  if (
-    p.length >= 4
-    && p[0] === 'payload'
-    && p[1] === 'questions'
-    && /^\d+$/.test(String(p[2]))
-    && p[p.length - 1] === 'type'
-    && value !== 'multiple-choice'
-  ) {
-    setValueAtPath(next, [...p.slice(0, -1), 'options'], [])
-  }
-
-  if (
-    p.length >= 4
-    && p[0] === 'payload'
-    && p[1] === 'questions'
-    && /^\d+$/.test(String(p[2]))
-    && p[p.length - 1] === 'type'
-    && value === 'multiple-choice'
-  ) {
-    const optPath = [...p.slice(0, -1), 'options']
-    const cur = getValueAtPath(next, optPath)
-    if (!Array.isArray(cur)) {
-      setValueAtPath(next, optPath, [])
-    }
-  }
-
-  if (
-    p.length >= 8
-    && p[0] === 'payload'
-    && p[1] === 'testOfControls'
-    && p.includes('questions')
-    && /^\d+$/.test(String(p[p.length - 2]))
-    && p[p.length - 1] === 'type'
-    && value !== 'multiple-choice'
-  ) {
-    setValueAtPath(next, [...p.slice(0, -1), 'options'], [])
-  }
-
-  if (
-    p.length >= 8
-    && p[0] === 'payload'
-    && p[1] === 'testOfControls'
-    && p.includes('questions')
-    && /^\d+$/.test(String(p[p.length - 2]))
-    && p[p.length - 1] === 'type'
-    && value === 'multiple-choice'
-  ) {
-    const optPath = [...p.slice(0, -1), 'options']
-    const cur = getValueAtPath(next, optPath)
-    if (!Array.isArray(cur)) {
-      setValueAtPath(next, optPath, [])
     }
   }
 
