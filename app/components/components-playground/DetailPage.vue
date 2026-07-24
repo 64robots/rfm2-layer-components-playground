@@ -617,6 +617,7 @@ onBeforeUnmount(() => {
             <UTabs
               v-model="viewport"
               :items="viewportItems"
+              class="playground-high-contrast-tabs"
               size="sm"
               variant="pill"
               :ui="highContrastTabsUi"
@@ -694,7 +695,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <UTabs v-model="activeTab" :items="tabItems" class="border-b border-default p-4" :ui="highContrastTabsUi" />
+          <UTabs v-model="activeTab" :items="tabItems" class="playground-high-contrast-tabs border-b border-default p-4" :ui="highContrastTabsUi" />
 
           <div class="min-h-0 flex-1 overflow-auto p-4">
             <div v-if="activeTab === 'form'" class="space-y-4">
@@ -1089,3 +1090,9 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.playground-high-contrast-tabs :deep([data-slot='trigger'][data-state='active']) {
+  background-color: #18181b;
+}
+</style>
