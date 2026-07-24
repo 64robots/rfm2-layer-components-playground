@@ -31,6 +31,8 @@ export type ComponentsCatalogItem = {
   version: string | null
   stability: string | null
   visibility: string | null
+  previewImageKey?: string | null
+  previewImageUrl?: string | null
 }
 
 export type ComponentsCatalogPayload = {
@@ -50,6 +52,8 @@ export type ComponentsCatalogDetailPayload = {
   version: string | null
   stability: string | null
   visibility: string | null
+  previewImageKey?: string | null
+  previewImageUrl?: string | null
   defaultConfig: Record<string, unknown> | null
   jsonSchema: Record<string, unknown> | null
   compiledContract: Record<string, unknown> | null
