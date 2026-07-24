@@ -1396,6 +1396,31 @@ function questionBasePathForOptionsArrayPath(arrayPath: string[]): string[] | nu
   return null
 }
 
+/** Draft path prefix for a question row object, e.g. `payload.questions.0` or `payload.questionSets.0.questions.1`. */
+function isPayloadQuestionRowPathPrefix(pathPrefix: string[]): boolean {
+  if (pathPrefix.length < 3) {
+    return false
+  }
+  const rowIndex = pathPrefix[pathPrefix.length - 1]
+  const parentKey = pathPrefix[pathPrefix.length - 2]
+  return parentKey === 'questions' && /^\d+$/.test(String(rowIndex))
+}
+
+/** Base path for a question `kind` field, including nested consolidation question sets. */
+function questionKindFieldBasePath(path: string[]): string[] | null {
+  if (path[0] !== 'payload' || path[path.length - 1] !== 'kind') {
+    return null
+  }
+  const questionsIdx = path.lastIndexOf('questions')
+  if (questionsIdx < 0 || questionsIdx >= path.length - 2) {
+    return null
+  }
+  if (!/^\d+$/.test(String(path[path.length - 2]))) {
+    return null
+  }
+  return path.slice(0, -1)
+}
+
 function ensureInvestigationTestOfControlsObject(draft: Record<string, unknown>): void {
   const payload = getValueAtPath(draft, ['payload'])
   if (!isRecord(payload)) {
@@ -3166,8 +3191,7 @@ function walkNestedPayloadArrayDescriptors(
     if (
       key === 'options'
       && (isQuizFamilySlug(componentSlug) || isFraudTriangleSlug(componentSlug) || isBiasRankingSlug(componentSlug) || isInvestigationConsolidationSlug(componentSlug))
-      && pathPrefix.length >= 2
-      && pathPrefix[pathPrefix.length - 2] === 'questions'
+      && isPayloadQuestionRowPathPrefix(pathPrefix)
       && isRecord(obj)
       && obj.kind === 'text'
     ) {
@@ -3175,8 +3199,7 @@ function walkNestedPayloadArrayDescriptors(
     }
     const isInvestigationQuestionOptions = key === 'options'
       && isInvestigationActivitySlug(componentSlug)
-      && pathPrefix.length >= 2
-      && pathPrefix[pathPrefix.length - 2] === 'questions'
+      && isPayloadQuestionRowPathPrefix(pathPrefix)
       && isRecord(obj)
 
     if (isInvestigationQuestionOptions && obj.kind === 'text') {
@@ -3194,8 +3217,7 @@ function walkNestedPayloadArrayDescriptors(
       const sharedQuestionNonTextOptions =
         key === 'options'
         && (isFraudTriangleSlug(componentSlug) || isBiasRankingSlug(componentSlug) || isInvestigationConsolidationSlug(componentSlug))
-        && pathPrefix.length >= 2
-        && pathPrefix[pathPrefix.length - 2] === 'questions'
+        && isPayloadQuestionRowPathPrefix(pathPrefix)
         && isRecord(obj)
         && obj.kind !== 'text'
       const investigationSelectOptions = isInvestigationQuestionOptions && obj.kind !== 'text'
@@ -3286,6 +3308,161 @@ export function collectNestedPayloadArrayDescriptors(
     out,
   )
   return out
+}
+
+function nestedPayloadListPathsForParent(
+  parentPanelId: string,
+  allPanels: FormFieldPanel[],
+): string[] {
+  const panelIds = new Set(allPanels.map(panel => panel.id))
+  const children = allPanels
+    .filter(panel => parentPayloadPanelId(panel.id, panelIds) === parentPanelId)
+    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const child of children) {
+    const listPath = payloadArrayListPathFromPanelId(child.id)
+    if (!listPath || seen.has(listPath)) {
+      continue
+    }
+    seen.add(listPath)
+    out.push(listPath)
+  }
+  return out
+}
+
+/**
+ * Nested payload array list paths to render under a row panel (e.g. quiz/bias-ranking
+ * `payload.questions.N.options` when kind is single/multi select, even before rows exist).
+ */
+export function nestedPayloadListPathsForRow(
+  parentPanelId: string,
+  allPanels: FormFieldPanel[],
+  draft: Record<string, unknown>,
+  componentSlug: string | undefined,
+): string[] {
+  const fromPanels = nestedPayloadListPathsForParent(parentPanelId, allPanels)
+  const slug = componentSlug || ''
+
+  if (isInvestigationActivitySlug(slug)) {
+    if (/^payload\.testOfControls\.controls\.\d+$/.test(parentPanelId)) {
+      const objectivesPath = `${parentPanelId}.objectives`
+      return fromPanels.includes(objectivesPath) ? fromPanels : [...fromPanels, objectivesPath]
+    }
+
+    if (/^payload\.testOfControls\.controls\.\d+\.objectives\.\d+$/.test(parentPanelId)) {
+      const questionsPath = `${parentPanelId}.questions`
+      return fromPanels.includes(questionsPath) ? fromPanels : [...fromPanels, questionsPath]
+    }
+
+    const tocQuestionMatch = parentPanelId.match(/^payload\.testOfControls\.controls\.(\d+)\.objectives\.(\d+)\.questions\.(\d+)$/)
+    if (tocQuestionMatch) {
+      const [, controlIdx, objectiveIdx, questionIdx] = tocQuestionMatch
+      const kind = getValueAtPath(draft, [
+        'payload',
+        'testOfControls',
+        'controls',
+        controlIdx!,
+        'objectives',
+        objectiveIdx!,
+        'questions',
+        questionIdx!,
+        'kind',
+      ])
+      const optPath = `${parentPanelId}.options`
+      if (kind === 'text') {
+        return fromPanels.filter(listPath => listPath !== optPath)
+      }
+      if (!fromPanels.includes(optPath)) {
+        return [...fromPanels, optPath]
+      }
+      return fromPanels
+    }
+  }
+
+  const consolidationQuestionMatch = parentPanelId.match(/^payload\.questionSets\.(\d+)\.questions\.(\d+)$/)
+  if (consolidationQuestionMatch && isInvestigationConsolidationSlug(slug)) {
+    const [, setIdx, qIdx] = consolidationQuestionMatch
+    const kind = getValueAtPath(draft, [
+      'payload',
+      'questionSets',
+      setIdx!,
+      'questions',
+      qIdx!,
+      'kind',
+    ])
+    const optPath = `${parentPanelId}.options`
+    if (kind === 'text') {
+      return fromPanels.filter(listPath => listPath !== optPath)
+    }
+    if (!fromPanels.includes(optPath)) {
+      return [...fromPanels, optPath]
+    }
+    return fromPanels
+  }
+
+  if (/^payload\.questionSets\.\d+$/.test(parentPanelId) && isInvestigationConsolidationSlug(slug)) {
+    const questionsPath = `${parentPanelId}.questions`
+    return fromPanels.includes(questionsPath) ? fromPanels : [...fromPanels, questionsPath]
+  }
+
+  const questionMatch = parentPanelId.match(/^payload\.questions\.(\d+)$/)
+  if (!questionMatch) {
+    if (isFraudTriangleSlug(slug)) {
+      const docMatch = parentPanelId.match(/^payload\.documents\.(\d+)$/)
+      if (docMatch) {
+        const displayType = getValueAtPath(draft, [
+          'payload',
+          'documents',
+          docMatch[1]!,
+          'displayType',
+        ])
+        const tabsPath = `${parentPanelId}.pageTabs`
+        if (displayType === 'tab-document') {
+          return fromPanels.includes(tabsPath) ? fromPanels : [...fromPanels, tabsPath]
+        }
+        return fromPanels.filter(listPath => listPath !== tabsPath)
+      }
+    }
+    return fromPanels
+  }
+
+  const qIdx = questionMatch[1]!
+  const optPath = `${parentPanelId}.options`
+
+  if (isQuizFamilySlug(slug)) {
+    const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+    if (kind === 'text') {
+      return fromPanels.filter(listPath => listPath !== optPath)
+    }
+    if (!fromPanels.includes(optPath)) {
+      return [...fromPanels, optPath]
+    }
+    return fromPanels
+  }
+
+  if (isFraudTriangleSlug(slug) || isBiasRankingSlug(slug)) {
+    const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+    if (kind === 'text') {
+      return fromPanels.filter(listPath => listPath !== optPath)
+    }
+    if (!fromPanels.includes(optPath)) {
+      return [...fromPanels, optPath]
+    }
+    return fromPanels
+  }
+
+  if (isInvestigationActivitySlug(slug)) {
+    const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+    if (kind === 'text') {
+      return fromPanels.filter(listPath => listPath !== optPath)
+    }
+    if (!fromPanels.includes(optPath)) {
+      return [...fromPanels, optPath]
+    }
+  }
+
+  return fromPanels
 }
 
 /** `payload.schemes.2` → `payload.schemes` */
@@ -3584,18 +3761,14 @@ export function applyFieldUpdateToDraft(
   }
 
   const p = field.path
-  const isQuestionKindPath = p[0] === 'payload'
-    && p.length >= 4
-    && p[p.length - 1] === 'kind'
-    && /^\d+$/.test(String(p[p.length - 2]))
-    && p[p.length - 3] === 'questions'
+  const questionBasePath = questionKindFieldBasePath(p)
 
-  if (isQuestionKindPath && value === 'text') {
-    setValueAtPath(next, [...p.slice(0, -1), 'options'], [])
+  if (questionBasePath && value === 'text') {
+    setValueAtPath(next, [...questionBasePath, 'options'], [])
   }
 
-  if (isQuestionKindPath && (value === 'single_select' || value === 'multi_select')) {
-    const optPath = [...p.slice(0, -1), 'options']
+  if (questionBasePath && (value === 'single_select' || value === 'multi_select')) {
+    const optPath = [...questionBasePath, 'options']
     const cur = getValueAtPath(next, optPath)
     if (!Array.isArray(cur)) {
       setValueAtPath(next, optPath, [])
