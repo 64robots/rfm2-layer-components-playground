@@ -8,6 +8,7 @@ const loading = ref(false)
 const loadError = ref('')
 const catalog = ref<ComponentsCatalogPayload | null>(null)
 const search = ref('')
+const failedPreviewSlugs = ref(new Set<string>())
 
 const uxCategoryLabels: Record<string, string> = {
   interactive: 'Interactive',
@@ -81,6 +82,7 @@ const groupedComponents = computed(() => {
 async function loadCatalog() {
   loading.value = true
   loadError.value = ''
+  failedPreviewSlugs.value = new Set()
 
   try {
     catalog.value = await adapter.fetchCatalog()
@@ -89,6 +91,10 @@ async function loadCatalog() {
   } finally {
     loading.value = false
   }
+}
+
+function markPreviewFailed(slug: string) {
+  failedPreviewSlugs.value = new Set([...failedPreviewSlugs.value, slug])
 }
 
 onMounted(async () => {
@@ -154,7 +160,21 @@ onMounted(async () => {
               class="group block border border-default rounded-lg overflow-hidden bg-elevated transition hover:shadow-sm"
             >
               <div class="aspect-[3/2] bg-muted overflow-hidden">
-                <div class="h-full w-full flex items-center justify-center text-xs text-muted">
+                <img
+                  v-if="item.previewImageUrl && !failedPreviewSlugs.has(item.slug)"
+                  :src="item.previewImageUrl"
+                  :alt="`${item.label || item.slug} preview`"
+                  :data-testid="`catalog-preview-image-${item.slug}`"
+                  class="h-full w-full object-cover object-top"
+                  loading="lazy"
+                  decoding="async"
+                  @error="markPreviewFailed(item.slug)"
+                >
+                <div
+                  v-else
+                  :data-testid="`catalog-preview-fallback-${item.slug}`"
+                  class="h-full w-full flex items-center justify-center text-xs text-muted"
+                >
                   {{ item.label || item.slug }}
                 </div>
               </div>
