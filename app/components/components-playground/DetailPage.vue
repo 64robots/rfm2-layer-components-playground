@@ -15,13 +15,16 @@ import {
   buildFormFieldsFromDetail,
   getSchemaType,
   getValueAtPath,
+  isInvestigationConsolidationSlug,
   isNumericSchemaType,
   exclusiveCorrectArrayPathForField,
   isExclusiveCorrectRadioChecked,
+  nestedPayloadListPathsForRow,
   normalizePropsDraft,
   partitionFieldsByItemPanels,
   setValueAtPath,
 } from '../../utils/component-contract-form'
+import PlaygroundPayloadNestedArrayGroup from './PlaygroundPayloadNestedArrayGroup.vue'
 
 type ViewportMode = 'desktop' | 'tablet' | 'mobile'
 type DetailTab = 'form' | 'metadata' | 'schema' | 'contract' | 'a11y'
@@ -203,6 +206,19 @@ const formFieldGroups = computed<FormFieldGroup[]>(() => {
   return groups
 })
 
+const payloadPanels = computed(() => formFieldGroups.value.find(group => group.key === 'payload')?.panels ?? [])
+
+function payloadRootNestedListPaths(group: FormFieldGroup): string[] {
+  if (group.key !== 'payload') {
+    return []
+  }
+  const componentSlug = detail.value?.slug || slug.value
+  if (isInvestigationConsolidationSlug(componentSlug)) {
+    return ['payload.questionSets']
+  }
+  return []
+}
+
 const contrastMatrix = computed<ContrastRow[]>(() => {
   const colors = themeColors.value
   const pairs = [
@@ -355,6 +371,11 @@ function getMediaAssetType(field: FormField): string {
 
 async function updateField(field: FormField, value: unknown) {
   propsDraft.value = applyFieldUpdateToDraft(propsDraft.value, field, value)
+  await renderComponent()
+}
+
+async function updateDraft(next: Record<string, unknown>) {
+  propsDraft.value = next
   await renderComponent()
 }
 
@@ -817,6 +838,21 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div
+                      v-for="nestedListPath in payloadRootNestedListPaths(group)"
+                      :key="`${group.key}-root-${nestedListPath}`"
+                      class="ms-1 border-s border-default ps-3"
+                    >
+                      <PlaygroundPayloadNestedArrayGroup
+                        :list-path-str="nestedListPath"
+                        :all-panels="payloadPanels"
+                        :component-slug="detail?.slug || slug"
+                        :compiled-contract="(detail?.compiledContract as Record<string, unknown> | null | undefined)"
+                        :model-value="propsDraft"
+                        @update:model-value="updateDraft"
+                      />
+                    </div>
+
+                    <div
                       v-for="panel in group.panels"
                       :key="panel.id"
                       class="rounded-md border border-default bg-default/25 p-2.5"
@@ -922,14 +958,34 @@ onBeforeUnmount(() => {
                             variant="soft"
                             size="sm"
                             class="w-full"
-                            @update:model-value="(value) => updateField(field, value)"
-                          />
-                        </div>
+                          @update:model-value="(value) => updateField(field, value)"
+                        />
+                      </div>
+
+                      <div
+                        v-for="nestedListPath in nestedPayloadListPathsForRow(
+                          panel.id,
+                          payloadPanels,
+                          propsDraft,
+                          detail?.slug,
+                        )"
+                        :key="`${panel.id}-${nestedListPath}`"
+                        class="ms-1 border-s border-default ps-3"
+                      >
+                        <PlaygroundPayloadNestedArrayGroup
+                          :list-path-str="nestedListPath"
+                          :all-panels="payloadPanels"
+                          :component-slug="detail?.slug || slug"
+                          :compiled-contract="(detail?.compiledContract as Record<string, unknown> | null | undefined)"
+                          :model-value="propsDraft"
+                          @update:model-value="updateDraft"
+                        />
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
+            </div>
             </div>
 
             <div v-else-if="activeTab === 'metadata'" class="space-y-2 text-sm">
