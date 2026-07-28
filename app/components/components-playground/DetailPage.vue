@@ -317,7 +317,7 @@ function isSchemeCorrectRadioChecked(field: FormField): boolean {
 
 function isContentCardBodyField(field: FormField): boolean {
   const slug = detail.value?.slug || ''
-  return (slug === 'intro-card' || slug === 'content-card') && field.id === 'payload.body'
+  return slug === 'content-card' && field.id === 'payload.body'
 }
 
 function isVideoDescriptionField(field: FormField): boolean {
@@ -326,7 +326,7 @@ function isVideoDescriptionField(field: FormField): boolean {
 
 function isContentCardMediaSrcField(field: FormField): boolean {
   const slug = detail.value?.slug || ''
-  if (slug !== 'intro-card' && slug !== 'content-card') {
+  if (slug !== 'content-card') {
     return false
   }
   return field.id === 'payload.media.file.url' || field.id === 'payload.media.src'
@@ -338,7 +338,7 @@ function isMediaAssetField(field: FormField): boolean {
 
 function shouldHideField(field: FormField): boolean {
   const slug = detail.value?.slug || ''
-  if (slug !== 'intro-card' && slug !== 'content-card') {
+  if (slug !== 'content-card') {
     return false
   }
   return field.id === 'payload.media.file.alt' || field.id === 'payload.media.alt'
