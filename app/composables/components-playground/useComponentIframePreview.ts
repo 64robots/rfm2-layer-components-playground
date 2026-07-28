@@ -80,7 +80,7 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
 <link id="${RFM_COMPONENTS_STYLESHEET_ID}" rel="stylesheet" href="${cssUrl}">
 <style>html,body{margin:0;padding:0;height:100%;background:#fff;}</style>
 </head><body>
-<div id="rfm-components-playground-mount" style="min-height:320px;padding:16px;"></div>
+<div id="rfm-components-playground-mount" style="width:100%;min-height:100%;"></div>
 <script type="module" src="${runtimeUrl}"><\/script>
 </body></html>`)
     iframeDoc.close()

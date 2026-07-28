@@ -4,6 +4,7 @@ import type {
   ComponentsCatalogItem,
   ComponentsCatalogPayload,
 } from '../../types/components-playground'
+import type { RfmViewport } from '#rfm-player/types'
 import { useComponentsPlaygroundAdapter } from '../../composables/components-playground/useComponentsPlaygroundAdapter'
 import {
   RFM_PLAYGROUND_MOUNT_SELECTOR,
@@ -26,7 +27,6 @@ import {
 } from '../../utils/component-contract-form'
 import PlaygroundPayloadNestedArrayGroup from './PlaygroundPayloadNestedArrayGroup.vue'
 
-type ViewportMode = 'desktop' | 'tablet' | 'mobile'
 type DetailTab = 'form' | 'metadata' | 'schema' | 'contract' | 'a11y'
 type A11yImpact = 'critical' | 'serious' | 'moderate' | 'minor' | 'unknown'
 
@@ -79,23 +79,6 @@ const DEFAULT_THEME_COLORS: ThemeColors = {
   warning: '#f59e0b',
 }
 
-const VIEWPORT_FRAME_STYLES: Record<ViewportMode, Record<string, string>> = {
-  desktop: {
-    width: '100%',
-    height: '100%',
-  },
-  tablet: {
-    width: 'min(calc(100% - 0.75rem), 900px, calc((100dvh - 18rem) * 0.9184))',
-    aspectRatio: '900 / 980',
-    maxHeight: 'min(980px, calc(100dvh - 18rem))',
-  },
-  mobile: {
-    width: 'min(calc(100% - 0.75rem), 420px, calc((100dvh - 18rem) * 0.5527))',
-    aspectRatio: '420 / 760',
-    maxHeight: 'min(760px, calc(100dvh - 18rem))',
-  },
-}
-
 const route = useRoute()
 const router = useRouter()
 const runtimeConfig = useRuntimeConfig()
@@ -119,7 +102,7 @@ const loadError = ref('')
 const catalog = ref<ComponentsCatalogPayload | null>(null)
 const detail = ref<ComponentsCatalogDetailPayload | null>(null)
 
-const viewport = ref<ViewportMode>('desktop')
+const viewport = ref<RfmViewport>('desktop')
 const activeTab = ref<DetailTab>('form')
 const propsDraft = ref<Record<string, unknown>>({})
 const themeColors = ref<ThemeColors>({ ...DEFAULT_THEME_COLORS })
@@ -137,12 +120,6 @@ function onCatalogSlugSelect(value: string | undefined) {
 
   void router.push(`/components/${next}`)
 }
-
-const viewportItems: Array<{ label: string, value: ViewportMode }> = [
-  { label: 'Desktop', value: 'desktop' },
-  { label: 'Tablet', value: 'tablet' },
-  { label: 'Mobile', value: 'mobile' },
-]
 
 const tabItems = computed<Array<{ label: string, value: DetailTab }>>(() => {
   const items: Array<{ label: string, value: DetailTab }> = [{ label: 'Form', value: 'form' }]
@@ -172,8 +149,6 @@ const resolutionLabel = computed(() => {
 
   return `${detail.value.releaseId || 'unresolved'} (${detail.value.channel})`
 })
-
-const viewportFrameStyle = computed(() => VIEWPORT_FRAME_STYLES[viewport.value])
 
 const formFields = computed<FormField[]>(() => buildFormFieldsFromDetail(detail.value, propsDraft.value))
 
@@ -623,7 +598,10 @@ onBeforeUnmount(() => {
   <div class="h-full min-w-0 p-4 md:p-5">
     <div class="flex h-full min-w-0 overflow-hidden">
       <section class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <div class="flex items-center border-b border-default bg-default p-4">
+        <div
+          class="flex shrink-0 items-center border-b border-default bg-default p-4"
+          data-testid="component-detail-header"
+        >
           <div class="min-w-0 flex-1">
             <div class="text-sm font-semibold">
               {{ detail?.label || slug || 'Component' }}
@@ -635,13 +613,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="flex flex-1 items-center justify-center gap-3 px-4">
-            <UTabs
-              v-model="viewport"
-              :items="viewportItems"
-              size="sm"
-              variant="pill"
-              :ui="highContrastTabsUi"
-            />
+            <RfmViewportSwitcher v-model="viewport" />
             <div class="inline-flex items-center rounded-lg bg-elevated p-1 mb-2">
               <button
                 v-for="item in [{ label: 'Default', value: 'default' }, { label: 'RFM Classic', value: 'rfm-classic' }]"
@@ -679,24 +651,27 @@ onBeforeUnmount(() => {
           {{ runtimeError }}
         </div>
 
-        <div class="min-h-0 flex-1 overflow-auto overflow-x-hidden bg-[#0f172a] p-3 md:p-4">
-          <div class="mx-auto flex h-full min-h-full w-full max-w-full items-center justify-center py-1 md:py-2">
-            <div
-              class="overflow-hidden rounded-xl border border-default bg-default shadow-sm transition-all"
-              :style="viewportFrameStyle"
-            >
+        <div
+          class="min-h-0 flex-1 overflow-hidden bg-[#0f172a] p-3 md:p-4"
+          data-testid="component-preview-frame"
+        >
+          <div class="h-full min-h-0 w-full">
+            <RfmResponsivePreviewFrame :device="viewport">
               <iframe
                 ref="iframeRef"
-                class="h-full w-full border-0 rounded-lg"
+                class="h-full w-full border-0"
                 title="Component preview"
                 sandbox="allow-scripts allow-same-origin"
               />
-            </div>
+            </RfmResponsivePreviewFrame>
           </div>
         </div>
       </section>
 
-      <section class="flex w-[420px] shrink-0 flex-col border-l border-default bg-default">
+      <section
+        class="flex w-[420px] shrink-0 flex-col border-l border-default bg-default"
+        data-testid="component-authoring-panel"
+      >
         <div class="space-y-3 border-b border-default p-4">
           <UFormField label="Available Components">
             <USelect
@@ -717,7 +692,10 @@ onBeforeUnmount(() => {
         <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
           <UTabs v-model="activeTab" :items="tabItems" class="border-b border-default p-4" :ui="highContrastTabsUi" />
 
-          <div class="min-h-0 flex-1 overflow-auto p-4">
+          <div
+            class="min-h-0 flex-1 overflow-auto p-4"
+            data-testid="component-authoring-scroll"
+          >
             <div v-if="activeTab === 'form'" class="space-y-4">
               <div v-if="visibleFormFields.length === 0" class="text-sm text-muted">
                 No editable form fields are available for this component yet.
