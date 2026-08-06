@@ -2,6 +2,7 @@ import type { Ref } from 'vue'
 import { useComponentsRuntime } from './useComponentsRuntime'
 
 export const RFM_PLAYGROUND_MOUNT_SELECTOR = '#rfm-components-playground-mount'
+const RFM_COMPONENTS_STYLESHEET_ID = 'rfm-components-bundle-css'
 
 export function resolvePreviewAssetUrl(cdnBaseUrl: string, key: string): string {
   if (/^https?:\/\//i.test(String(key || ''))) {
@@ -52,7 +53,10 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
 
     const mountReady = Boolean(iframeDoc.querySelector(RFM_PLAYGROUND_MOUNT_SELECTOR))
     const runtimeReady = Boolean(iframeWin.__RFM_COMPONENTS_VUE__)
-    if (mountReady && runtimeReady) {
+    const stylesheetReady = Boolean(
+      (iframeDoc.getElementById(RFM_COMPONENTS_STYLESHEET_ID) as HTMLLinkElement | null)?.sheet,
+    )
+    if (mountReady && runtimeReady && stylesheetReady) {
       return
     }
 
@@ -73,16 +77,17 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
 <meta charset="utf-8">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="${cssUrl}">
+<link id="${RFM_COMPONENTS_STYLESHEET_ID}" rel="stylesheet" href="${cssUrl}">
 <style>html,body{margin:0;padding:0;height:100%;background:#fff;}</style>
 </head><body>
-<div id="rfm-components-playground-mount" style="min-height:320px;padding:16px;"></div>
+<div id="rfm-components-playground-mount" style="width:100%;min-height:100%;"></div>
 <script type="module" src="${runtimeUrl}"><\/script>
 </body></html>`)
     iframeDoc.close()
 
     for (let i = 0; i < 100; i++) {
-      if (iframeWin.__RFM_COMPONENTS_VUE__) {
+      const stylesheet = iframeDoc.getElementById(RFM_COMPONENTS_STYLESHEET_ID) as HTMLLinkElement | null
+      if (iframeWin.__RFM_COMPONENTS_VUE__ && stylesheet?.sheet) {
         return
       }
       await new Promise((resolve) => setTimeout(resolve, 50))
@@ -137,6 +142,7 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
         props,
         themeVariant,
         previewMode: true,
+        surface: 'learner',
       })
       return
     }
@@ -151,6 +157,7 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
       props,
       themeVariant,
       previewMode: true,
+      surface: 'learner',
     })
     previewPodPrimed = true
     lastRenderedPreviewSlug = slug

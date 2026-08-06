@@ -146,39 +146,26 @@ const FRAUD_TRIANGLE_ARRAY_LIST_PATHS_BY_CHUNK: Record<number, readonly string[]
 }
 
 /** Match activity: title + instructions, then questions, then feedback fields. */
-const MATCH_ACTIVITY_PAYLOAD_CHUNK_BEFORE_QUESTIONS: readonly string[] = [
+const SLIDER_PAYLOAD_CHUNK_BEFORE_SOURCES: readonly string[] = [
   'payload.title',
-  'payload.instructions',
-]
-
-const MATCH_ACTIVITY_PAYLOAD_CHUNK_AFTER_QUESTIONS: readonly string[] = [
-  'payload.correctFeedback',
-  'payload.incorrectFeedback',
-]
-
-const MATCH_ACTIVITY_ARRAY_LIST_PATHS_BY_CHUNK: Record<number, readonly string[]> = {
-  0: ['payload.questions'],
-}
-
-const BIAS_RANKING_PAYLOAD_CHUNK_BEFORE_SOURCES: readonly string[] = [
-  'payload.title',
-  'payload.instructions',
+  'payload.descriptionHtml',
   'payload.helpText',
 ]
 
-const BIAS_RANKING_PAYLOAD_CHUNK_BEFORE_STATEMENTS: readonly string[] = [
-  'payload.lowImpactLabel',
-  'payload.highImpactLabel',
+const SLIDER_PAYLOAD_CHUNK_BEFORE_STATEMENTS: readonly string[] = [
+  'payload.marks.minimum',
+  'payload.marks.maximum',
 ]
 
-const BIAS_RANKING_PAYLOAD_CHUNK_AFTER_STATEMENTS: readonly string[] = [
-  'payload.questionsInstructions',
+const SLIDER_PAYLOAD_CHUNK_BEFORE_ASSESSMENT: readonly string[] = [
+  'payload.assessment.title',
+  'payload.assessment.description',
 ]
 
-const BIAS_RANKING_ARRAY_LIST_PATHS_BY_CHUNK: Record<number, readonly string[]> = {
+const SLIDER_ARRAY_LIST_PATHS_BY_CHUNK: Record<number, readonly string[]> = {
   0: ['payload.sources'],
   1: ['payload.statements'],
-  2: ['payload.questions'],
+  2: ['payload.assessment.questions'],
 }
 
 /**
@@ -189,33 +176,20 @@ export function standalonePayloadFieldChunksForLessonEditor(
   payloadStandaloneFields: FormField[],
   componentSlug: string | undefined,
 ): FormField[][] {
-  if (componentSlug === 'match-activity') {
-    const before = MATCH_ACTIVITY_PAYLOAD_CHUNK_BEFORE_QUESTIONS
+  if (isSliderSlug(componentSlug)) {
+    const beforeSources = SLIDER_PAYLOAD_CHUNK_BEFORE_SOURCES
       .map(id => payloadStandaloneFields.find(f => f.id === id))
       .filter((f): f is FormField => Boolean(f))
-    const after = MATCH_ACTIVITY_PAYLOAD_CHUNK_AFTER_QUESTIONS
+    const beforeStatements = SLIDER_PAYLOAD_CHUNK_BEFORE_STATEMENTS
       .map(id => payloadStandaloneFields.find(f => f.id === id))
       .filter((f): f is FormField => Boolean(f))
-    const used = new Set([...before, ...after].map(f => f.id))
+    const beforeAssessment = SLIDER_PAYLOAD_CHUNK_BEFORE_ASSESSMENT
+      .map(id => payloadStandaloneFields.find(f => f.id === id))
+      .filter((f): f is FormField => Boolean(f))
+    const used = new Set([...beforeSources, ...beforeStatements, ...beforeAssessment].map(f => f.id))
     const rest = payloadStandaloneFields.filter(f => !used.has(f.id))
-    // title/instructions → questions array → feedback (+ any remaining scalars)
-    return [before, [...after, ...rest]]
-  }
-
-  if (componentSlug === 'bias-ranking') {
-    const beforeSources = BIAS_RANKING_PAYLOAD_CHUNK_BEFORE_SOURCES
-      .map(id => payloadStandaloneFields.find(f => f.id === id))
-      .filter((f): f is FormField => Boolean(f))
-    const beforeStatements = BIAS_RANKING_PAYLOAD_CHUNK_BEFORE_STATEMENTS
-      .map(id => payloadStandaloneFields.find(f => f.id === id))
-      .filter((f): f is FormField => Boolean(f))
-    const afterStatements = BIAS_RANKING_PAYLOAD_CHUNK_AFTER_STATEMENTS
-      .map(id => payloadStandaloneFields.find(f => f.id === id))
-      .filter((f): f is FormField => Boolean(f))
-    const used = new Set([...beforeSources, ...beforeStatements, ...afterStatements].map(f => f.id))
-    const rest = payloadStandaloneFields.filter(f => !used.has(f.id))
-    // title/instructions/help → sources → labels → statements → reflection (+ rest)
-    return [beforeSources, beforeStatements, [...afterStatements, ...rest]]
+    // Intro → sources → scale labels → statements → optional assessment.
+    return [beforeSources, beforeStatements, [...beforeAssessment, ...rest]]
   }
 
   if (isFraudTriangleSlug(componentSlug)) {
@@ -276,16 +250,8 @@ export function payloadArrayListPathsAfterStandaloneChunk(
   chunkIndex: number,
   allRootPaths: readonly string[],
 ): string[] {
-  if (componentSlug === 'match-activity') {
-    const preferred = MATCH_ACTIVITY_ARRAY_LIST_PATHS_BY_CHUNK[chunkIndex]
-    if (!preferred?.length) {
-      return []
-    }
-    const preferredSet = new Set(preferred)
-    return allRootPaths.filter(path => preferredSet.has(path))
-  }
-  if (componentSlug === 'bias-ranking') {
-    const preferred = BIAS_RANKING_ARRAY_LIST_PATHS_BY_CHUNK[chunkIndex]
+  if (isSliderSlug(componentSlug)) {
+    const preferred = SLIDER_ARRAY_LIST_PATHS_BY_CHUNK[chunkIndex]
     if (!preferred?.length) {
       return []
     }
@@ -341,19 +307,12 @@ export const MULTILINE_FIELD_PATTERN
 
 /** Catalog slugs that use the unified solve-the-case-family contract. */
 export function isSolveTheCaseFamilySlug(slug: string | undefined): boolean {
-  if (!slug) {
-    return false
-  }
-  return (
-    slug === 'solve-the-case-family'
-    || slug.startsWith('solve_the_case')
-    || slug === 'solve-the-case-connection'
-  )
+  return slug === 'solve-the-case-family'
 }
 
 /** Investigation desktop + accessible variants share the same payload shape. */
 export function isInvestigationActivitySlug(slug: string | undefined): boolean {
-  return slug === 'investigation' || slug === 'accessible-investigation'
+  return slug === 'investigation'
 }
 
 /** `payload.files[]` fields stored in the draft but not edited in the lesson form. */
@@ -801,8 +760,8 @@ export function isFraudTriangleSlug(slug: string | undefined): boolean {
   return slug === 'fraud-triangle'
 }
 
-export function isBiasRankingSlug(slug: string | undefined): boolean {
-  return slug === 'bias-ranking'
+export function isSliderSlug(slug: string | undefined): boolean {
+  return slug === 'slider'
 }
 
 export function isInvestigationConsolidationSlug(slug: string | undefined): boolean {
@@ -826,29 +785,12 @@ export function isSynopsisSlug(slug: string | undefined): boolean {
 
 /** Fraud scheme family catalog slugs. */
 export function isFraudSchemeFamilySlug(slug: string | undefined): boolean {
-  if (!slug) {
-    return false
-  }
-  return (
-    slug === 'fraud-scheme-family'
-    || slug === 'fraud-scheme'
-    || slug === 'fraud-scheme-two-attempts'
-    || slug === 'fraud-scheme-review'
-  )
+  return slug === 'fraud-scheme-family'
 }
 
 /** Quiz family catalog slugs (unified `questions[].kind` + `options`). */
 export function isQuizFamilySlug(slug: string | undefined): boolean {
-  if (!slug) {
-    return false
-  }
-  return (
-    slug === 'quiz-family'
-    || slug === 'quiz'
-    || slug.startsWith('quiz-questions')
-    || slug === 'final-exam'
-    || slug === 'review-quiz'
-  )
+  return slug === 'quiz-family'
 }
 
 export function humanizeKey(value: string): string {
@@ -996,17 +938,11 @@ export function filterInvestigationRootPayloadArrayListPaths(
   })
 }
 
-const BIAS_RANKING_SOURCE_COLOR_LABELS: Record<string, string> = {
-  '#E11D48': 'Red',
-  '#F97316': 'Orange',
-  '#86EFAC': 'Light green',
-  '#7DD3FC': 'Light blue',
-  '#EAB308': 'Yellow',
-  '#A855F7': 'Purple',
-  '#EC4899': 'Pink',
-  '#14B8A6': 'Teal',
-  '#6366F1': 'Indigo',
-  '#64748B': 'Slate',
+const SLIDER_SOURCE_COLOR_LABELS: Record<string, string> = {
+  danger: 'Red',
+  warning: 'Yellow',
+  success: 'Green',
+  info: 'Blue',
 }
 
 export function labelForFormEnumField(
@@ -1028,8 +964,8 @@ export function labelForFormEnumField(
   if (isSolveTheCaseFamilySlug(componentSlug) && field.id === 'config.suspectsSource') {
     return SOLVE_THE_CASE_SUSPECTS_SOURCE_LABELS[value] ?? humanizeKey(value)
   }
-  if (isBiasRankingSlug(componentSlug) && /^payload\.sources\.\d+\.color$/.test(field.id)) {
-    return BIAS_RANKING_SOURCE_COLOR_LABELS[value] ?? value
+  if (isSliderSlug(componentSlug) && /^payload\.sources\.\d+\.color$/.test(field.id)) {
+    return SLIDER_SOURCE_COLOR_LABELS[value] ?? value
   }
   return humanizeKey(value)
 }
@@ -1220,7 +1156,7 @@ function orderedArrayItemPropertyKeys(
   let keys = Object.keys(itemProperties)
 
   const isFraudSchemes
-    = arrayKey === 'schemes' && (slug === 'fraud-scheme-family' || slug === 'fraud-scheme')
+    = arrayKey === 'schemes' && isFraudSchemeFamilySlug(slug)
   const isSolveSuspects = isSolveTheCaseFamilySlug(slug) && arrayKey === 'suspects' && !parentArrayKey
   const isSolveQuestionOptions
     = isSolveTheCaseFamilySlug(slug)
@@ -1256,21 +1192,15 @@ function orderedArrayItemPropertyKeys(
     return orderKeysWithPreferredHead(keys, ['label', 'file'], itemProperties)
   }
 
-  const isMatchActivityQuestions = slug === 'match-activity' && arrayKey === 'questions' && !parentArrayKey
-  if (isMatchActivityQuestions) {
-    keys = keys.filter((k) => k !== 'id' && k !== 'feedback')
-    return orderKeysWithPreferredHead(keys, ['prompt', 'answer'], itemProperties)
-  }
-
-  const isBiasRankingSources = slug === 'bias-ranking' && arrayKey === 'sources' && !parentArrayKey
-  if (isBiasRankingSources) {
+  const isSliderSources = isSliderSlug(slug) && arrayKey === 'sources' && !parentArrayKey
+  if (isSliderSources) {
     keys = keys.filter((k) => k !== 'id')
     return orderKeysWithPreferredHead(keys, ['name', 'color'], itemProperties)
   }
 
-  const isBiasRankingStatements = slug === 'bias-ranking' && arrayKey === 'statements' && !parentArrayKey
-  if (isBiasRankingStatements) {
-    keys = keys.filter((k) => k !== 'id' && k !== 'exampleRanks')
+  const isSliderStatements = isSliderSlug(slug) && arrayKey === 'statements' && !parentArrayKey
+  if (isSliderStatements) {
+    keys = keys.filter((k) => k !== 'id')
     return orderKeysWithPreferredHead(keys, ['text', 'isExample'], itemProperties)
   }
 
@@ -1396,6 +1326,31 @@ function questionBasePathForOptionsArrayPath(arrayPath: string[]): string[] | nu
   return null
 }
 
+/** Draft path prefix for a question row object, e.g. `payload.questions.0` or `payload.questionSets.0.questions.1`. */
+function isPayloadQuestionRowPathPrefix(pathPrefix: string[]): boolean {
+  if (pathPrefix.length < 3) {
+    return false
+  }
+  const rowIndex = pathPrefix[pathPrefix.length - 1]
+  const parentKey = pathPrefix[pathPrefix.length - 2]
+  return parentKey === 'questions' && /^\d+$/.test(String(rowIndex))
+}
+
+/** Base path for a question `kind` field, including nested consolidation question sets. */
+function questionKindFieldBasePath(path: string[]): string[] | null {
+  if (path[0] !== 'payload' || path[path.length - 1] !== 'kind') {
+    return null
+  }
+  const questionsIdx = path.lastIndexOf('questions')
+  if (questionsIdx < 0 || questionsIdx >= path.length - 2) {
+    return null
+  }
+  if (!/^\d+$/.test(String(path[path.length - 2]))) {
+    return null
+  }
+  return path.slice(0, -1)
+}
+
 function ensureInvestigationTestOfControlsObject(draft: Record<string, unknown>): void {
   const payload = getValueAtPath(draft, ['payload'])
   if (!isRecord(payload)) {
@@ -1424,7 +1379,7 @@ function appendContentCardMediaExternalFileFields(
   options: BuildFormFieldsOptions,
 ): void {
   const slug = options.componentSlug || ''
-  if (slug !== 'content-card' && slug !== 'intro-card') {
+  if (slug !== 'content-card') {
     return
   }
   const kind = getValueAtPath(draft, ['payload', 'media', 'kind'])
@@ -1540,7 +1495,7 @@ function appendVideoActivityMediaFields(
   }
 }
 
-/** Preferred Content Card / intro-card payload field order (API may serve schema keys alphabetically). */
+/** Preferred Content Card payload field order (API may serve schema keys alphabetically). */
 const INTRO_CONTENT_CARD_PAYLOAD_FIELD_ORDER: readonly string[] = [
   'payload.title',
   'payload.body',
@@ -1555,7 +1510,7 @@ function reorderIntroContentCardPayloadStandaloneFields(
   options: BuildFormFieldsOptions,
 ): void {
   const slug = options.componentSlug || ''
-  if (slug !== 'content-card' && slug !== 'intro-card') {
+  if (slug !== 'content-card') {
     return
   }
 
@@ -1943,13 +1898,13 @@ function emitPayloadArrayObjectFields(
     }
   }
   if (
-    isBiasRankingSlug(options.componentSlug)
+    isSliderSlug(options.componentSlug)
     && arrayKey === 'options'
     && parentArrayKey === 'questions'
     && arrayPath.length >= 4
   ) {
-    const qIdx = arrayPath[arrayPath.length - 2]!
-    const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+    const questionBasePath = questionBasePathForOptionsArrayPath(arrayPath)
+    const kind = questionBasePath ? getValueAtPath(draft, [...questionBasePath, 'kind']) : undefined
     if (kind === 'text') {
       return
     }
@@ -2147,7 +2102,7 @@ function emitPayloadArrayObjectFields(
         && (
           isQuizFamilySlug(slug)
           || isFraudTriangleSlug(slug)
-          || isBiasRankingSlug(slug)
+          || isSliderSlug(slug)
           || isInvestigationConsolidationSlug(slug)
           || isInvestigationActivitySlug(slug)
         )
@@ -2163,13 +2118,13 @@ function emitPayloadArrayObjectFields(
           (
             itemKey === 'isCorrect'
             && (
-              ((slug === 'fraud-scheme-family' || slug === 'fraud-scheme') && arrayKey === 'schemes' && !parentArrayKey)
+              (isFraudSchemeFamilySlug(slug) && arrayKey === 'schemes' && !parentArrayKey)
               || (isSolveTheCaseFamilySlug(slug) && arrayKey === 'options' && parentArrayKey === 'supportingQuestions')
               || (
                 (
                   isQuizFamilySlug(slug)
                   || isFraudTriangleSlug(slug)
-                  || isBiasRankingSlug(slug)
+                  || isSliderSlug(slug)
                   || isInvestigationConsolidationSlug(slug)
                   || isInvestigationActivitySlug(slug)
                 )
@@ -2346,8 +2301,6 @@ export function buildFormFieldsFromCompiledContract(
   reorderFraudSchemePayloadStandaloneFields(fields, options)
   omitLegacyFraudTrianglePayloadFormFields(fields, options)
   omitFraudTriangleInactiveDocumentModeFields(fields, normalizedDraft, options)
-  omitMatchActivityHiddenPayloadFormFields(fields, options)
-  omitBiasRankingHiddenPayloadFormFields(fields, options)
   omitInvestigationConsolidationHiddenPayloadFormFields(fields, options)
   annotateInvestigationConsolidationSourceActivityField(fields, options)
   omitInvestigationSuspectConditionalFormFields(fields, normalizedDraft, options)
@@ -2358,42 +2311,6 @@ export function buildFormFieldsFromCompiledContract(
   restrictInvestigationCompletionGateOptions(fields, normalizedDraft, options)
 
   return fields
-}
-
-function omitMatchActivityHiddenPayloadFormFields(
-  fields: FormField[],
-  options: BuildFormFieldsOptions,
-): void {
-  if (options.componentSlug !== 'match-activity') {
-    return
-  }
-  const next = fields.filter((field) => {
-    if (field.section !== 'payload') {
-      return true
-    }
-    // Author-controlled via drag in lesson editor preview; not a form field.
-    return field.id !== 'payload.answerOrder'
-  })
-  fields.length = 0
-  fields.push(...next)
-}
-
-function omitBiasRankingHiddenPayloadFormFields(
-  fields: FormField[],
-  options: BuildFormFieldsOptions,
-): void {
-  if (options.componentSlug !== 'bias-ranking') {
-    return
-  }
-  const next = fields.filter((field) => {
-    if (field.section !== 'payload') {
-      return true
-    }
-    // exampleRanks is a sourceId→number map; seeded from fixture / defaults when isExample.
-    return !/^payload\.statements\.\d+\.exampleRanks/.test(field.id)
-  })
-  fields.length = 0
-  fields.push(...next)
 }
 
 function omitInvestigationConsolidationHiddenPayloadFormFields(
@@ -3165,9 +3082,8 @@ function walkNestedPayloadArrayDescriptors(
 
     if (
       key === 'options'
-      && (isQuizFamilySlug(componentSlug) || isFraudTriangleSlug(componentSlug) || isBiasRankingSlug(componentSlug) || isInvestigationConsolidationSlug(componentSlug))
-      && pathPrefix.length >= 2
-      && pathPrefix[pathPrefix.length - 2] === 'questions'
+      && (isQuizFamilySlug(componentSlug) || isFraudTriangleSlug(componentSlug) || isSliderSlug(componentSlug) || isInvestigationConsolidationSlug(componentSlug))
+      && isPayloadQuestionRowPathPrefix(pathPrefix)
       && isRecord(obj)
       && obj.kind === 'text'
     ) {
@@ -3175,8 +3091,7 @@ function walkNestedPayloadArrayDescriptors(
     }
     const isInvestigationQuestionOptions = key === 'options'
       && isInvestigationActivitySlug(componentSlug)
-      && pathPrefix.length >= 2
-      && pathPrefix[pathPrefix.length - 2] === 'questions'
+      && isPayloadQuestionRowPathPrefix(pathPrefix)
       && isRecord(obj)
 
     if (isInvestigationQuestionOptions && obj.kind === 'text') {
@@ -3193,9 +3108,8 @@ function walkNestedPayloadArrayDescriptors(
         && obj.kind !== 'text'
       const sharedQuestionNonTextOptions =
         key === 'options'
-        && (isFraudTriangleSlug(componentSlug) || isBiasRankingSlug(componentSlug) || isInvestigationConsolidationSlug(componentSlug))
-        && pathPrefix.length >= 2
-        && pathPrefix[pathPrefix.length - 2] === 'questions'
+        && (isFraudTriangleSlug(componentSlug) || isSliderSlug(componentSlug) || isInvestigationConsolidationSlug(componentSlug))
+        && isPayloadQuestionRowPathPrefix(pathPrefix)
         && isRecord(obj)
         && obj.kind !== 'text'
       const investigationSelectOptions = isInvestigationQuestionOptions && obj.kind !== 'text'
@@ -3286,6 +3200,172 @@ export function collectNestedPayloadArrayDescriptors(
     out,
   )
   return out
+}
+
+function nestedPayloadListPathsForParent(
+  parentPanelId: string,
+  allPanels: FormFieldPanel[],
+): string[] {
+  const panelIds = new Set(allPanels.map(panel => panel.id))
+  const children = allPanels
+    .filter(panel => parentPayloadPanelId(panel.id, panelIds) === parentPanelId)
+    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const child of children) {
+    const listPath = payloadArrayListPathFromPanelId(child.id)
+    if (!listPath || seen.has(listPath)) {
+      continue
+    }
+    seen.add(listPath)
+    out.push(listPath)
+  }
+  return out
+}
+
+/**
+ * Nested payload array list paths to render under a row panel (e.g. quiz/slider
+ * `payload.questions.N.options` when kind is single/multi select, even before rows exist).
+ */
+export function nestedPayloadListPathsForRow(
+  parentPanelId: string,
+  allPanels: FormFieldPanel[],
+  draft: Record<string, unknown>,
+  componentSlug: string | undefined,
+): string[] {
+  const fromPanels = nestedPayloadListPathsForParent(parentPanelId, allPanels)
+  const slug = componentSlug || ''
+
+  if (isInvestigationActivitySlug(slug)) {
+    if (/^payload\.testOfControls\.controls\.\d+$/.test(parentPanelId)) {
+      const objectivesPath = `${parentPanelId}.objectives`
+      return fromPanels.includes(objectivesPath) ? fromPanels : [...fromPanels, objectivesPath]
+    }
+
+    if (/^payload\.testOfControls\.controls\.\d+\.objectives\.\d+$/.test(parentPanelId)) {
+      const questionsPath = `${parentPanelId}.questions`
+      return fromPanels.includes(questionsPath) ? fromPanels : [...fromPanels, questionsPath]
+    }
+
+    const tocQuestionMatch = parentPanelId.match(/^payload\.testOfControls\.controls\.(\d+)\.objectives\.(\d+)\.questions\.(\d+)$/)
+    if (tocQuestionMatch) {
+      const [, controlIdx, objectiveIdx, questionIdx] = tocQuestionMatch
+      const kind = getValueAtPath(draft, [
+        'payload',
+        'testOfControls',
+        'controls',
+        controlIdx!,
+        'objectives',
+        objectiveIdx!,
+        'questions',
+        questionIdx!,
+        'kind',
+      ])
+      const optPath = `${parentPanelId}.options`
+      if (kind === 'text') {
+        return fromPanels.filter(listPath => listPath !== optPath)
+      }
+      if (!fromPanels.includes(optPath)) {
+        return [...fromPanels, optPath]
+      }
+      return fromPanels
+    }
+  }
+
+  const consolidationQuestionMatch = parentPanelId.match(/^payload\.questionSets\.(\d+)\.questions\.(\d+)$/)
+  if (consolidationQuestionMatch && isInvestigationConsolidationSlug(slug)) {
+    const [, setIdx, qIdx] = consolidationQuestionMatch
+    const kind = getValueAtPath(draft, [
+      'payload',
+      'questionSets',
+      setIdx!,
+      'questions',
+      qIdx!,
+      'kind',
+    ])
+    const optPath = `${parentPanelId}.options`
+    if (kind === 'text') {
+      return fromPanels.filter(listPath => listPath !== optPath)
+    }
+    if (!fromPanels.includes(optPath)) {
+      return [...fromPanels, optPath]
+    }
+    return fromPanels
+  }
+
+  if (/^payload\.questionSets\.\d+$/.test(parentPanelId) && isInvestigationConsolidationSlug(slug)) {
+    const questionsPath = `${parentPanelId}.questions`
+    return fromPanels.includes(questionsPath) ? fromPanels : [...fromPanels, questionsPath]
+  }
+
+  const sliderAssessmentQuestionMatch = parentPanelId.match(/^payload\.assessment\.questions\.(\d+)$/)
+  if (sliderAssessmentQuestionMatch && isSliderSlug(slug)) {
+    const qIdx = sliderAssessmentQuestionMatch[1]!
+    const kind = getValueAtPath(draft, ['payload', 'assessment', 'questions', qIdx, 'kind'])
+    const optPath = `${parentPanelId}.options`
+    if (kind === 'text') {
+      return fromPanels.filter(listPath => listPath !== optPath)
+    }
+    return fromPanels.includes(optPath) ? fromPanels : [...fromPanels, optPath]
+  }
+
+  const questionMatch = parentPanelId.match(/^payload\.questions\.(\d+)$/)
+  if (!questionMatch) {
+    if (isFraudTriangleSlug(slug)) {
+      const docMatch = parentPanelId.match(/^payload\.documents\.(\d+)$/)
+      if (docMatch) {
+        const displayType = getValueAtPath(draft, [
+          'payload',
+          'documents',
+          docMatch[1]!,
+          'displayType',
+        ])
+        const tabsPath = `${parentPanelId}.pageTabs`
+        if (displayType === 'tab-document') {
+          return fromPanels.includes(tabsPath) ? fromPanels : [...fromPanels, tabsPath]
+        }
+        return fromPanels.filter(listPath => listPath !== tabsPath)
+      }
+    }
+    return fromPanels
+  }
+
+  const qIdx = questionMatch[1]!
+  const optPath = `${parentPanelId}.options`
+
+  if (isQuizFamilySlug(slug)) {
+    const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+    if (kind === 'text') {
+      return fromPanels.filter(listPath => listPath !== optPath)
+    }
+    if (!fromPanels.includes(optPath)) {
+      return [...fromPanels, optPath]
+    }
+    return fromPanels
+  }
+
+  if (isFraudTriangleSlug(slug)) {
+    const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+    if (kind === 'text') {
+      return fromPanels.filter(listPath => listPath !== optPath)
+    }
+    if (!fromPanels.includes(optPath)) {
+      return [...fromPanels, optPath]
+    }
+    return fromPanels
+  }
+
+  if (isInvestigationActivitySlug(slug)) {
+    const kind = getValueAtPath(draft, ['payload', 'questions', qIdx, 'kind'])
+    if (kind === 'text') {
+      return fromPanels.filter(listPath => listPath !== optPath)
+    }
+    if (!fromPanels.includes(optPath)) {
+      return [...fromPanels, optPath]
+    }
+  }
+
+  return fromPanels
 }
 
 /** `payload.schemes.2` → `payload.schemes` */
@@ -3584,18 +3664,14 @@ export function applyFieldUpdateToDraft(
   }
 
   const p = field.path
-  const isQuestionKindPath = p[0] === 'payload'
-    && p.length >= 4
-    && p[p.length - 1] === 'kind'
-    && /^\d+$/.test(String(p[p.length - 2]))
-    && p[p.length - 3] === 'questions'
+  const questionBasePath = questionKindFieldBasePath(p)
 
-  if (isQuestionKindPath && value === 'text') {
-    setValueAtPath(next, [...p.slice(0, -1), 'options'], [])
+  if (questionBasePath && value === 'text') {
+    setValueAtPath(next, [...questionBasePath, 'options'], [])
   }
 
-  if (isQuestionKindPath && (value === 'single_select' || value === 'multi_select')) {
-    const optPath = [...p.slice(0, -1), 'options']
+  if (questionBasePath && (value === 'single_select' || value === 'multi_select')) {
+    const optPath = [...questionBasePath, 'options']
     const cur = getValueAtPath(next, optPath)
     if (!Array.isArray(cur)) {
       setValueAtPath(next, optPath, [])

@@ -3,6 +3,7 @@ export type ComponentsChannel = 'dev' | 'staging' | 'production'
 export type ComponentsResolutionPayload = {
   channel: ComponentsChannel
   releaseId: string
+  sourceRevision: string | null
   cdnBaseUrl: string
   vueEsmUrl?: string | null
   bundleCssUrl?: string | null
