@@ -39,7 +39,25 @@ export type ComponentsCatalogItem = {
 export type ComponentsCatalogPayload = {
   channel: ComponentsChannel
   releaseId: string | null
+  certification?: ComponentReleaseCertification | null
   components: ComponentsCatalogItem[]
+}
+
+export type ComponentReleaseCertificationEnvironment = {
+  status: 'certified' | 'not_certified'
+  required: number
+  passed: number
+  failed: number
+  missing: number
+  latest_at: string | null
+}
+
+export type ComponentReleaseCertification = {
+  contract_schema_version: string | null
+  contract_version: string | null
+  contract_checksum: string
+  required_scenario_count: number
+  environments: Record<'local' | 'test' | 'staging' | 'production', ComponentReleaseCertificationEnvironment>
 }
 
 export type ComponentsCatalogDetailPayload = {

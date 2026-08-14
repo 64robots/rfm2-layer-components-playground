@@ -10,6 +10,19 @@ const catalog = ref<ComponentsCatalogPayload | null>(null)
 const search = ref('')
 const failedPreviewSlugs = ref(new Set<string>())
 
+const certificationEnvironments = computed(() => {
+  const environments = catalog.value?.certification?.environments
+
+  if (!environments) {
+    return []
+  }
+
+  return (['local', 'test', 'staging', 'production'] as const).map(environment => ({
+    environment,
+    ...environments[environment],
+  }))
+})
+
 const uxCategoryLabels: Record<string, string> = {
   interactive: 'Interactive',
   display: 'Display',
@@ -120,19 +133,68 @@ onMounted(async () => {
     </div>
 
     <UCard class="bg-default">
-      <template #header>
-        <div class="flex items-center justify-between gap-2">
-          <div class="min-w-0">
-            <h2 class="text-lg font-semibold">Components</h2>
-            <p class="text-xs text-muted">Browse runtime-resolved component catalog by category.</p>
+      <template v-if="catalog?.certification" #header>
+        <div class="space-y-4" data-testid="component-release-certification">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Release certification</p>
+              <h2 class="mt-1 text-lg font-semibold">{{ catalog.releaseId }}</h2>
+              <p class="mt-1 text-xs text-muted">
+                Contract v{{ catalog.certification.contract_version || 'unknown' }} ·
+                {{ catalog.certification.required_scenario_count }} required scenarios
+              </p>
+            </div>
+            <code
+              class="max-w-full break-all rounded-md bg-muted px-3 py-2 text-[11px] text-muted"
+              data-testid="component-contract-checksum"
+            >{{ catalog.certification.contract_checksum }}</code>
           </div>
 
-          <div v-if="catalog" class="flex items-center gap-2">
-            <UBadge color="neutral" variant="soft" size="sm">{{ catalog.channel }}</UBadge>
-            <UBadge color="neutral" variant="subtle" size="sm">{{ catalog.releaseId || 'unresolved' }}</UBadge>
+          <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <div
+              v-for="environment in certificationEnvironments"
+              :key="environment.environment"
+              :data-testid="`component-certification-${environment.environment}`"
+              class="rounded-lg border border-default bg-elevated/50 p-3"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-semibold capitalize">{{ environment.environment }}</span>
+                <UBadge
+                  :color="environment.status === 'certified' ? 'success' : 'warning'"
+                  variant="soft"
+                  size="sm"
+                >
+                  {{ environment.status === 'certified' ? 'Certified' : 'Not certified' }}
+                </UBadge>
+              </div>
+              <p class="mt-2 text-sm font-semibold text-highlighted">
+                {{ environment.passed }} / {{ environment.required }} passed
+              </p>
+              <p v-if="environment.failed || environment.missing" class="mt-1 text-[11px] text-muted">
+                {{ environment.failed }} failed · {{ environment.missing }} missing
+              </p>
+            </div>
           </div>
         </div>
       </template>
+
+      <template v-else-if="catalog" #header>
+        <div data-testid="component-release-certification-unavailable">
+          <p class="text-sm font-semibold">Certification unavailable</p>
+          <p class="mt-1 text-xs text-muted">This resolved release does not include an immutable acceptance contract.</p>
+        </div>
+      </template>
+
+      <div v-if="catalog" class="mb-6 flex items-center justify-between gap-2 border-b border-default pb-4">
+        <div class="min-w-0">
+          <h2 class="text-lg font-semibold">Components</h2>
+          <p class="text-xs text-muted">Browse runtime-resolved component catalog by category.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <UBadge color="neutral" variant="soft" size="sm">{{ catalog.channel }}</UBadge>
+          <UBadge color="neutral" variant="subtle" size="sm">{{ catalog.releaseId || 'unresolved' }}</UBadge>
+        </div>
+      </div>
 
       <div v-if="loading" class="text-sm text-muted">Loading component library…</div>
       <div v-else-if="loadError" class="text-sm text-error">{{ loadError }}</div>
