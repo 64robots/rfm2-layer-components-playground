@@ -78,9 +78,9 @@ export function useComponentIframePreview(iframeRef: Ref<HTMLIFrameElement | nul
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link id="${RFM_COMPONENTS_STYLESHEET_ID}" rel="stylesheet" href="${cssUrl}">
-<style>html,body{margin:0;padding:0;height:100%;background:#fff;}</style>
+<style>html,body{margin:0;padding:0;height:100%;background:#fff;}#rfm-components-playground-mount{width:100%;height:100%;min-height:100%;display:flex;flex-direction:column;}#rfm-components-playground-mount>.rfm-theme{display:flex;flex:1 1 auto;flex-direction:column;width:100%;height:100%;min-height:0;}</style>
 </head><body>
-<div id="rfm-components-playground-mount" style="width:100%;min-height:100%;"></div>
+<div id="rfm-components-playground-mount"></div>
 <script type="module" src="${runtimeUrl}"><\/script>
 </body></html>`)
     iframeDoc.close()
