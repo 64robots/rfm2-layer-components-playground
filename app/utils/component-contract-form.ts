@@ -1486,12 +1486,60 @@ function appendVideoActivityMediaFields(
     multiline: false,
     disabled: false,
   }
+  const captionsUrl: FormField = {
+    id: 'payload.captions.url',
+    label: 'Captions',
+    description: 'Optional captions/subtitles file such as WebVTT (.vtt).',
+    path: ['payload', 'captions', 'url'],
+    required: false,
+    section: 'payload',
+    schema: { type: 'string', title: 'Captions URL' },
+    multiline: false,
+    disabled: false,
+    customType: 'media-url',
+    mediaUrlMode: 'any',
+  }
+  const captionsTitle: FormField = {
+    id: 'payload.captions.title',
+    label: 'Captions title',
+    description: 'Optional display label for the captions file.',
+    path: ['payload', 'captions', 'title'],
+    required: false,
+    section: 'payload',
+    schema: { type: 'string', title: 'Captions title' },
+    multiline: false,
+    disabled: false,
+  }
+  const transcriptUrl: FormField = {
+    id: 'payload.transcript.url',
+    label: 'Transcript',
+    description: 'Optional transcript file such as TXT, VTT, or PDF.',
+    path: ['payload', 'transcript', 'url'],
+    required: false,
+    section: 'payload',
+    schema: { type: 'string', title: 'Transcript URL' },
+    multiline: false,
+    disabled: false,
+    customType: 'media-url',
+    mediaUrlMode: 'any',
+  }
+  const transcriptTitle: FormField = {
+    id: 'payload.transcript.title',
+    label: 'Transcript title',
+    description: 'Optional display label for the transcript file.',
+    path: ['payload', 'transcript', 'title'],
+    required: false,
+    section: 'payload',
+    schema: { type: 'string', title: 'Transcript title' },
+    multiline: false,
+    disabled: false,
+  }
 
   const descIdx = out.findIndex(f => f.id === 'payload.description')
   if (descIdx >= 0) {
-    out.splice(descIdx + 1, 0, videoUrl, videoTitle, posterUrl, posterAlt)
+    out.splice(descIdx + 1, 0, videoUrl, videoTitle, posterUrl, posterAlt, captionsTitle, captionsUrl, transcriptTitle, transcriptUrl)
   } else {
-    out.push(videoUrl, videoTitle, posterUrl, posterAlt)
+    out.push(videoUrl, videoTitle, posterUrl, posterAlt, captionsTitle, captionsUrl, transcriptTitle, transcriptUrl)
   }
 }
 
