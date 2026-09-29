@@ -2222,6 +2222,12 @@ function emitPayloadArrayObjectFields(
           && arrayKey === 'documents'
           && itemKey === 'url'
           && itemType === 'string'
+      const isFraudSchemeContentImageUrl
+        = isFraudSchemeFamilySlug(slug)
+          && arrayKey === 'contentImages'
+          && !parentArrayKey
+          && itemKey === 'url'
+          && itemType === 'string'
       const isFraudTriangleDocumentPageCountReadOnly
         = isFraudTriangleSlug(slug)
           && arrayKey === 'documents'
@@ -2242,7 +2248,10 @@ function emitPayloadArrayObjectFields(
         section,
         schema: itemProp,
         multiline: itemType === 'string' && MULTILINE_FIELD_PATTERN.test(itemKey),
-        disabled: MEDIA_REFERENCE_KEYS.has(itemKey) && !isInvestigationEvidenceUrl && !isFraudTriangleDocumentUrl,
+        disabled: MEDIA_REFERENCE_KEYS.has(itemKey)
+          && !isInvestigationEvidenceUrl
+          && !isFraudTriangleDocumentUrl
+          && !isFraudSchemeContentImageUrl,
         ...(isFraudTriangleDocumentPageCountReadOnly || isFraudTrianglePageTabPageReadOnly
           ? { readOnly: true as const }
           : {}),
@@ -2259,6 +2268,9 @@ function emitPayloadArrayObjectFields(
           : {}),
         ...(isFraudTriangleDocumentUrl
           ? { customType: 'media-url' as const, mediaUrlMode: 'any' as const }
+          : {}),
+        ...(isFraudSchemeContentImageUrl
+          ? { customType: 'media-url' as const, mediaUrlMode: 'image' as const }
           : {}),
         ...(isInvestigationQuestionLinkedFileId || isInvestigationFileViewableAfterId
           ? { customType: 'investigation-linked-file-select' as const }
