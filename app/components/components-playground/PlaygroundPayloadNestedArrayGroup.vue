@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { FormField, FormFieldPanel } from '../../utils/component-contract-form'
+import { resolveEnumSelectPresentation } from '../../utils/enum-select-presentation'
 import {
   appendPayloadArrayItem,
   applyFieldUpdateToDraft,
@@ -91,14 +92,14 @@ function exclusiveCorrectRadioGroupName(field: FormField): string {
     : `exclusive-correct-${props.componentSlug}`
 }
 
-function enumSelectItems(field: FormField): Array<{ label: string, value: string | number }> {
-  const enums = field.schema.enum
-  if (!Array.isArray(enums)) {
-    return []
-  }
-  return enums.map(value => ({
+function enumPresentation(field: FormField) {
+  return resolveEnumSelectPresentation(field.schema.enum, getFieldValue(field))
+}
+
+function enumSelectItems(field: FormField) {
+  return enumPresentation(field).values.map(value => ({
     label: labelForFormEnumField(props.componentSlug, field, String(value)),
-    value: value as string | number,
+    value,
   }))
 }
 
@@ -119,7 +120,10 @@ function removeLastRow() {
   if (!descriptor || rows.value.length <= descriptor.minItems) {
     return
   }
-  emit('update:modelValue', removePayloadArrayItemAt(props.modelValue, descriptor.arrayPath, rows.value.length - 1))
+  const next = removePayloadArrayItemAt(props.modelValue, descriptor.arrayPath, rows.value.length - 1, descriptor.minItems)
+  if (next !== null) {
+    emit('update:modelValue', next)
+  }
 }
 </script>
 
@@ -180,18 +184,22 @@ function removeLastRow() {
               @update:model-value="(value) => updateField(field, value)"
             />
 
-            <USelect
-              v-else-if="Array.isArray(field.schema.enum)"
-              :items="enumSelectItems(field)"
-              label-key="label"
-              value-key="value"
-              :model-value="getFieldValue(field)"
-              :disabled="field.disabled"
-              variant="soft"
-              size="sm"
-              class="w-full"
-              @update:model-value="(value) => updateField(field, value)"
-            />
+            <template v-else-if="Array.isArray(field.schema.enum)">
+              <USelect
+                :items="enumSelectItems(field)"
+                label-key="label"
+                value-key="value"
+                :model-value="enumPresentation(field).modelValue"
+                :disabled="field.disabled || enumPresentation(field).isDisabled"
+                variant="soft"
+                size="sm"
+                class="w-full"
+                @update:model-value="(value) => updateField(field, value)"
+              />
+              <p v-if="enumPresentation(field).message" class="text-sm text-warning" role="status">
+                {{ enumPresentation(field).message }}
+              </p>
+            </template>
 
             <UTextarea
               v-else-if="field.multiline"
