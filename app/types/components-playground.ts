@@ -81,21 +81,10 @@ export type ComponentsCatalogDetailPayload = {
   ai: Record<string, unknown> | null
 }
 
-export type ComponentsRuntime = {
-  getPod?: (slug: string) => unknown | null
-  renderPod: (args: {
-    slug: string
-    mountSelector: string
-    props?: Record<string, unknown>
-    themeVariant?: string
-  }) => void
-  updateProps: (args: {
-    mountSelector: string
-    props: Record<string, unknown>
-    themeVariant?: string
-  }) => void
-  unmount: (args: { mountSelector: string }) => void
-}
+export type ComponentsRuntime = Pick<
+  typeof import('#rfm-components/runtime'),
+  'renderPod' | 'updateProps' | 'unmount'
+> & Partial<Pick<typeof import('#rfm-components/runtime'), 'getPod'>>
 
 export type ComponentsPlaygroundHostAdapter = {
   fetchCatalog: () => Promise<ComponentsCatalogPayload>
