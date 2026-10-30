@@ -1,0 +1,33 @@
+name: Shared form utility tests
+
+on:
+  pull_request:
+    paths:
+      - app/utils/component-contract-form.ts
+      - tests/**
+      - .github/workflows/utility-tests.yml
+  push:
+    branches: [staging]
+    paths:
+      - app/utils/component-contract-form.ts
+      - tests/**
+      - .github/workflows/utility-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  shared-form-utilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+      - name: Run focused utility regressions
+        run: >-
+          npx --yes --package=tsx@4.21.0 tsx --test
+          tests/investigation-layout-preservation.test.ts
+          tests/payload-row-removal.test.ts
+          tests/enum-select-presentation.test.ts

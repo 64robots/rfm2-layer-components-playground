@@ -3013,7 +3013,8 @@ export function padPayloadArraysFromContract(
   ensureFraudSchemesHaveIds(next)
   ensureSolveTheCaseFamilyIds(next)
   ensureInvestigationFileIds(next)
-  ensureInvestigationFilePositions(next)
+  // Missing positions belong to the renderer's theme-specific layout. Only
+  // explicit authoring operations should turn them into persisted coordinates.
   if (isInvestigationActivitySlug(options?.componentSlug)) {
     ensureInvestigationSuspectSlugs(next)
   }
