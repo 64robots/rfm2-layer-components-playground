@@ -26,6 +26,7 @@ import {
   setValueAtPath,
 } from '../../utils/component-contract-form'
 import PlaygroundPayloadNestedArrayGroup from './PlaygroundPayloadNestedArrayGroup.vue'
+import { resolveEnumSelectPresentation } from '../../utils/enum-select-presentation'
 
 type DetailTab = 'form' | 'metadata' | 'schema' | 'contract' | 'a11y'
 type A11yImpact = 'critical' | 'serious' | 'moderate' | 'minor' | 'unknown'
@@ -108,6 +109,10 @@ const propsDraft = ref<Record<string, unknown>>({})
 const themeColors = ref<ThemeColors>({ ...DEFAULT_THEME_COLORS })
 const a11yAudit = ref<A11yAuditState>(createEmptyA11yAudit())
 const themeVariant = ref<'default' | 'rfm-classic'>('rfm-classic')
+const themeOptions: Array<{ label: string, value: 'default' | 'rfm-classic' }> = [
+  { label: 'Default', value: 'default' },
+  { label: 'RFM Classic', value: 'rfm-classic' },
+]
 
 const availableComponents = computed<ComponentsCatalogItem[]>(() => catalog.value?.components || [])
 const availableSlugs = computed<string[]>(() => availableComponents.value.map((item) => item.slug))
@@ -276,6 +281,14 @@ function setDraftFromObject(value: Record<string, unknown> | null | undefined) {
 
 function getFieldValue(field: FormField): unknown {
   return getValueAtPath(propsDraft.value, field.path)
+}
+
+function enumPresentation(field: FormField) {
+  return resolveEnumSelectPresentation(field.schema.enum, getFieldValue(field))
+}
+
+function enumSelectItems(field: FormField) {
+  return enumPresentation(field).values.map(value => ({ label: humanizeKey(String(value)), value }))
 }
 
 function exclusiveCorrectRadioGroupName(field: FormField): string {
@@ -496,9 +509,9 @@ function parseColorToRgb(color: string): { r: number, g: number, b: number } | n
 
   if (/^[0-9a-f]{3}$/.test(hex)) {
     return {
-      r: Number.parseInt(hex[0] + hex[0], 16),
-      g: Number.parseInt(hex[1] + hex[1], 16),
-      b: Number.parseInt(hex[2] + hex[2], 16),
+      r: Number.parseInt(hex.charAt(0).repeat(2), 16),
+      g: Number.parseInt(hex.charAt(1).repeat(2), 16),
+      b: Number.parseInt(hex.charAt(2).repeat(2), 16),
     }
   }
 
@@ -616,7 +629,7 @@ onBeforeUnmount(() => {
             <RfmViewportSwitcher v-model="viewport" />
             <div class="inline-flex items-center rounded-lg bg-elevated p-1 mb-2">
               <button
-                v-for="item in [{ label: 'Default', value: 'default' }, { label: 'RFM Classic', value: 'rfm-classic' }]"
+                v-for="item in themeOptions"
                 :key="item.value"
                 type="button"
                 class="rounded-md px-3 py-2  text-xs font-medium leading-none transition-colors"
@@ -777,18 +790,22 @@ onBeforeUnmount(() => {
                         @update:model-value="(value) => updateField(field, value)"
                       />
 
-                      <USelect
-                        v-else-if="Array.isArray(field.schema.enum)"
-                        :items="field.schema.enum.map((value) => ({ label: humanizeKey(String(value)), value }))"
-                        label-key="label"
-                        value-key="value"
-                        :model-value="getFieldValue(field)"
-                        :disabled="field.disabled"
-                        variant="soft"
-                        size="sm"
-                        class="w-full"
-                        @update:model-value="(value) => updateField(field, value)"
-                      />
+                      <template v-else-if="Array.isArray(field.schema.enum)">
+                        <USelect
+                          :items="enumSelectItems(field)"
+                          label-key="label"
+                          value-key="value"
+                          :model-value="enumPresentation(field).modelValue"
+                          :disabled="field.disabled || enumPresentation(field).isDisabled"
+                          variant="soft"
+                          size="sm"
+                          class="w-full"
+                          @update:model-value="(value) => updateField(field, value)"
+                        />
+                        <p v-if="enumPresentation(field).message" class="text-sm text-warning" role="status">
+                          {{ enumPresentation(field).message }}
+                        </p>
+                      </template>
 
                       <UTextarea
                         v-else-if="field.multiline"
@@ -902,18 +919,22 @@ onBeforeUnmount(() => {
                             @update:model-value="(value) => updateField(field, value)"
                           />
 
-                          <USelect
-                            v-else-if="Array.isArray(field.schema.enum)"
-                            :items="field.schema.enum.map((value) => ({ label: humanizeKey(String(value)), value }))"
-                            label-key="label"
-                            value-key="value"
-                            :model-value="getFieldValue(field)"
-                            :disabled="field.disabled"
-                            variant="soft"
-                            size="sm"
-                            class="w-full"
-                            @update:model-value="(value) => updateField(field, value)"
-                          />
+                          <template v-else-if="Array.isArray(field.schema.enum)">
+                            <USelect
+                              :items="enumSelectItems(field)"
+                              label-key="label"
+                              value-key="value"
+                              :model-value="enumPresentation(field).modelValue"
+                              :disabled="field.disabled || enumPresentation(field).isDisabled"
+                              variant="soft"
+                              size="sm"
+                              class="w-full"
+                              @update:model-value="(value) => updateField(field, value)"
+                            />
+                            <p v-if="enumPresentation(field).message" class="text-sm text-warning" role="status">
+                              {{ enumPresentation(field).message }}
+                            </p>
+                          </template>
 
                           <UTextarea
                             v-else-if="field.multiline"

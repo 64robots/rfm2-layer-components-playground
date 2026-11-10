@@ -125,8 +125,9 @@ function resolveInitialFilter(): MediaLibraryType {
     return preferred
   }
 
-  if (resolvedAllowedMediaTypes.value.length === 1) {
-    return resolvedAllowedMediaTypes.value[0]
+  const [onlyType] = resolvedAllowedMediaTypes.value
+  if (resolvedAllowedMediaTypes.value.length === 1 && onlyType !== undefined) {
+    return onlyType
   }
 
   return 'all'
