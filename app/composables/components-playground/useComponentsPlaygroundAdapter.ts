@@ -28,7 +28,7 @@ export function useComponentsPlaygroundAdapter(): ComponentsPlaygroundHostAdapte
 }
 
 async function fetchPayload<T>(path: string): Promise<T> {
-  const response = await $fetch(path) as ApiEnvelope<T> | T
+  const response = await $fetch<ApiEnvelope<T> | T>(path)
 
   if (isApiEnvelope<T>(response)) {
     if (response.success === false || response.isSuccess === false) {
