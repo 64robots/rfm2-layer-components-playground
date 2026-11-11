@@ -1,0 +1,63 @@
+name: Builder production pull request
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  staging-source:
+    name: Verify Staging source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Validate current staging and main
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const pr = context.payload.pull_request
+            const { owner, repo } = context.repo
+            const repository = `${owner}/${repo}`
+
+            if (pr?.base.ref !== 'main' || pr.base.repo.full_name !== repository
+                || pr.head.ref !== 'staging' || pr.head.repo?.full_name !== repository) {
+              throw new Error('Production requires a pull request from this repository’s staging branch to main.')
+            }
+
+            async function branchTips() {
+              const [main, staging] = await Promise.all(['main', 'staging'].map(async (branch) => {
+                const { data } = await github.rest.repos.getBranch({ owner, repo, branch })
+                return data.commit.sha
+              }))
+              return { main, staging }
+            }
+
+            const before = await branchTips()
+            if (pr.base.sha !== before.main) {
+              throw new Error('The pull request must target the current main commit. Run this check again after the pull request updates.')
+            }
+            if (pr.head.sha !== before.staging) {
+              throw new Error('The pull request must use the current staging commit. Run this check again after the pull request updates.')
+            }
+
+            const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+              owner,
+              repo,
+              basehead: `${before.main}...${before.staging}`,
+              per_page: 1,
+            })
+            if (comparison.status !== 'ahead' || comparison.merge_base_commit.sha !== before.main
+                || comparison.behind_by !== 0 || comparison.ahead_by < 1) {
+              throw new Error('Merge the current main into staging and validate staging before promoting.')
+            }
+
+            const after = await branchTips()
+            if (after.main !== before.main || after.staging !== before.staging) {
+              throw new Error('Main or staging moved during validation. Run this check again.')
+            }
+
+            core.info(`Staging ${before.staging} contains main ${before.main}.`)
